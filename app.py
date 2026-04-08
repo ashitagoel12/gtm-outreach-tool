@@ -24,9 +24,9 @@ def _secret(key: str) -> str:
     except Exception:
         return ""
 
-# Load both keys once at startup — all functions reference these module-level vars.
+# Load the Anthropic key from secrets at startup.
+# HubSpot tokens are user-provided at runtime via the UI — no secret needed.
 anthropic_key = _secret("ANTHROPIC_API_KEY")   # Used to authenticate Claude API calls
-hubspot_key   = _secret("HUBSPOT_API_KEY")      # HubSpot Private App token for CRM writes
 
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -433,7 +433,8 @@ def push_to_hubspot(api_key: str, contact_name: str, contact_role: str, company_
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 # Keeps the sidebar clean — just a usage guide and attribution.
-# API keys are never shown here; they load silently from st.secrets above.
+# The Anthropic key loads silently from st.secrets; HubSpot token is entered
+# by the user in the main panel after analysis is complete.
 
 with st.sidebar:
     st.markdown("### How it works")
@@ -441,7 +442,7 @@ with st.sidebar:
 1. **Fill in** your product, ICP, target company, and contact
 2. **Analyze** — Claude scores ICP fit with reasoning
 3. **Generate** — 4 personalised emails with send timing
-4. **Sync** — Push contact + emails to HubSpot with one click
+4. **Sync** *(optional)* — Enter your HubSpot token and push to CRM
 """)
     st.divider()
     st.caption("Powered by Claude Sonnet 4.5")
@@ -626,14 +627,12 @@ if run_btn and can_run:
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
     # ── Step 3: HubSpot sync ──────────────────────────────────────────────────
-    st.markdown("## 🔶 HubSpot Integration")
+    # HubSpot sync is optional. The user provides their own Personal Access
+    # Token here at runtime — it is never stored server-side or persisted.
+    st.markdown("## 🔶 HubSpot Integration *(optional)*")
 
-    if not hubspot_key:
-        # Secret not configured — show a warning instead of a broken button
-        st.warning("HubSpot API key not configured. Add HUBSPOT_API_KEY to Streamlit secrets.", icon="🔑")
-    else:
-        # Informational banner summarising what the push button will do
-        st.markdown(f"""
+    # Informational banner summarising what the push button will do
+    st.markdown(f"""
 <div class="hs-banner">
   <div style="font-size:2rem;">🔶</div>
   <div>
@@ -644,6 +643,33 @@ if run_btn and can_run:
 </div>
 """, unsafe_allow_html=True)
 
+    # Help card linking to HubSpot's token documentation
+    st.markdown("""
+<div class="card" style="background:#fff7f0; border-color:#fde8d8; margin-bottom:16px;">
+  <div class="card-title" style="color:#c2500a;">🔑 Where to find your token</div>
+  <p style="color:#374151; font-size:.875rem; margin:0;">
+    Generate a Private App token in HubSpot under
+    <strong>Settings → Integrations → Private Apps</strong>.
+    The token needs <code>crm.objects.contacts.write</code> and
+    <code>crm.objects.notes.write</code> scopes.<br><br>
+    <a href="https://knowledge.hubspot.com/integrations/how-do-i-get-my-hubspot-api-key"
+       target="_blank" style="color:#c2500a;">
+      📖 HubSpot API key documentation →
+    </a>
+  </p>
+</div>
+""", unsafe_allow_html=True)
+
+    # Password-masked input — token stays in the browser session only
+    hs_token = st.text_input(
+        "HubSpot Personal Access Token",
+        type="password",
+        placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        help="Your HubSpot Private App token. Never stored server-side.",
+    )
+
+    if hs_token:
+        # Token provided — show the push button
         hs_col, _ = st.columns([1, 3])
         with hs_col:
             hs_btn = st.button(
@@ -654,20 +680,23 @@ if run_btn and can_run:
 
         if hs_btn:
             with st.spinner("Syncing with HubSpot…"):
-                # Returns a list of (icon, message) tuples — one per API call
+                # Pass the user-provided token; returns (icon, message) tuples
                 log = push_to_hubspot(
-                    hubspot_key,
+                    hs_token,       # user-provided at runtime, not from secrets
                     contact_name,
                     contact_role,
                     company_url,
                     emails,
                 )
-            # Display each result line as a success or error message
+            # Display each API call result as a success or error message
             for icon, msg in log:
                 if icon == "✅":
                     st.success(f"{icon} {msg}")
                 else:
                     st.error(f"{icon} {msg}")
+    else:
+        # No token entered yet — prompt instead of showing a broken button
+        st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
 
 elif run_btn and not can_run:
     # Shouldn't normally be reachable (button is disabled), but handles edge cases
