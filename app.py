@@ -1,3 +1,9 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GTM Outreach Intelligence Tool
+# Streamlit app that uses Claude to score ICP fit and generate a personalised
+# 4-email outreach sequence, then syncs everything to HubSpot via its CRM API.
+# ─────────────────────────────────────────────────────────────────────────────
+
 import streamlit as st
 import anthropic
 import requests
@@ -5,17 +11,28 @@ import json
 import re
 from datetime import datetime, timedelta
 
-# ── Secrets: loaded silently from Streamlit Cloud secrets ────────────────────
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+# API keys are stored in Streamlit Cloud's secrets manager (Settings → Secrets)
+# and never exposed in the UI. _secret() wraps st.secrets so the app degrades
+# gracefully if a key is missing rather than raising an unhandled exception.
+
 def _secret(key: str) -> str:
+    """Return a named secret from st.secrets, or an empty string if absent."""
     try:
         return st.secrets.get(key, "")
     except Exception:
         return ""
 
-anthropic_key = _secret("ANTHROPIC_API_KEY")
-hubspot_key   = _secret("HUBSPOT_API_KEY")
+# Load both keys once at startup — all functions reference these module-level vars.
+anthropic_key = _secret("ANTHROPIC_API_KEY")   # Used to authenticate Claude API calls
+hubspot_key   = _secret("HUBSPOT_API_KEY")      # HubSpot Private App token for CRM writes
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
+# Must be the first Streamlit call in the script. Sets browser tab title, icon,
+# and uses "wide" layout so the two-column input form has enough room.
+
 st.set_page_config(
     page_title="GTM Outreach Intelligence",
     page_icon="🎯",
@@ -23,14 +40,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+
 # ── CSS ───────────────────────────────────────────────────────────────────────
+# All visual styling lives here as a single injected <style> block.
+# Classes used later in st.markdown() HTML are defined below.
+
 st.markdown("""
 <style>
-  /* Base */
+  /* ── Base page & sidebar background ── */
   [data-testid="stAppViewContainer"] { background: #f8f9fc; }
   [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e8ecf0; }
 
-  /* Header band */
+  /* ── Hero banner at the top of the main area ── */
   .hero {
     background: linear-gradient(135deg, #1a1f36 0%, #2d3561 100%);
     border-radius: 14px;
@@ -41,7 +62,7 @@ st.markdown("""
   .hero h1 { font-size: 2rem; font-weight: 700; margin: 0 0 6px 0; letter-spacing: -0.5px; }
   .hero p  { font-size: 1rem; color: #b0bcd4; margin: 0; }
 
-  /* Cards */
+  /* ── Generic white card container used for score and assessment panels ── */
   .card {
     background: #ffffff;
     border: 1px solid #e8ecf0;
@@ -50,6 +71,7 @@ st.markdown("""
     margin-bottom: 20px;
     box-shadow: 0 1px 4px rgba(0,0,0,.04);
   }
+  /* Small uppercase label used as a section heading inside a card */
   .card-title {
     font-size: .7rem;
     font-weight: 700;
@@ -59,7 +81,7 @@ st.markdown("""
     margin-bottom: 14px;
   }
 
-  /* Score badge */
+  /* ── ICP score badge — a circular coloured number ── */
   .score-badge {
     display: inline-flex;
     align-items: center;
@@ -71,29 +93,28 @@ st.markdown("""
     color: #fff;
     margin-bottom: 10px;
   }
-  .score-high   { background: linear-gradient(135deg,#22c55e,#16a34a); }
-  .score-medium { background: linear-gradient(135deg,#f59e0b,#d97706); }
-  .score-low    { background: linear-gradient(135deg,#ef4444,#dc2626); }
+  /* Colour variants applied dynamically based on the numeric score */
+  .score-high   { background: linear-gradient(135deg,#22c55e,#16a34a); }  /* 7-10 */
+  .score-medium { background: linear-gradient(135deg,#f59e0b,#d97706); }  /* 4-6  */
+  .score-low    { background: linear-gradient(135deg,#ef4444,#dc2626); }  /* 1-3  */
 
-  /* Email card */
+  /* ── Individual email cards in the outreach sequence ── */
   .email-card {
     background: #ffffff;
     border: 1px solid #e8ecf0;
-    border-left: 4px solid #6366f1;
+    border-left: 4px solid #6366f1;  /* accent colour overridden per-card inline */
     border-radius: 10px;
     padding: 20px 24px;
     margin-bottom: 16px;
   }
-  .email-card:nth-child(2) { border-left-color: #8b5cf6; }
-  .email-card:nth-child(3) { border-left-color: #06b6d4; }
-  .email-card:nth-child(4) { border-left-color: #10b981; }
 
-  .email-seq    { font-size: .65rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#6366f1; margin-bottom:4px; }
-  .email-timing { font-size:.78rem; color:#6b7280; margin-bottom:10px; }
+  /* Typography within each email card */
+  .email-seq     { font-size: .65rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#6366f1; margin-bottom:4px; }
+  .email-timing  { font-size:.78rem; color:#6b7280; margin-bottom:10px; }
   .email-subject { font-size:1rem; font-weight:600; color:#1a1f36; margin-bottom:8px; }
-  .email-body   { font-size:.875rem; color:#374151; white-space:pre-wrap; line-height:1.65; }
+  .email-body    { font-size:.875rem; color:#374151; white-space:pre-wrap; line-height:1.65; }
 
-  /* HubSpot button area */
+  /* ── HubSpot sync banner shown above the push button ── */
   .hs-banner {
     background: linear-gradient(135deg,#ff7a59,#ff5c35);
     border-radius: 12px;
@@ -107,49 +128,62 @@ st.markdown("""
   .hs-banner h3 { margin:0; font-size:1rem; font-weight:700; }
   .hs-banner p  { margin:0; font-size:.82rem; opacity:.9; }
 
-  /* Sidebar inputs */
-  .sidebar-section { font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:#7c8db0; margin: 18px 0 8px 0; }
-
-  /* Tag chips */
+  /* ── Chip / tag badge used to display strengths and gaps ── */
   .chip {
     display:inline-block; background:#eef2ff; color:#4338ca;
     border-radius:20px; padding:3px 10px; font-size:.72rem;
     font-weight:600; margin:3px;
   }
 
-  /* Divider */
+  /* ── Horizontal rule between major sections ── */
   .section-divider { border:none; border-top:1px solid #e8ecf0; margin: 28px 0; }
 
-  /* Subtle label */
+  /* Make all form labels slightly bolder for readability */
   label { font-weight: 600 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# ── Helper utilities ──────────────────────────────────────────────────────────
 
 def score_class(score: int) -> str:
+    """Map a numeric ICP score (1-10) to a CSS class for the score badge colour."""
     if score >= 7:
-        return "score-high"
+        return "score-high"    # green
     if score >= 4:
-        return "score-medium"
-    return "score-low"
+        return "score-medium"  # amber
+    return "score-low"         # red
 
 
 def extract_json_block(text: str) -> dict:
-    """Pull the first JSON object out of a markdown/text response."""
-    # Try fenced code block first
+    """
+    Pull the first JSON *object* out of a Claude response string.
+    Claude sometimes wraps JSON in a ```json ... ``` fence; this handles both
+    the fenced and bare-object cases so callers don't need to worry about format.
+    """
+    # Prefer a fenced code block if present
     m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
-    # Bare JSON object
+    # Fall back to the first bare JSON object in the text
     m = re.search(r"\{.*\}", text, re.DOTALL)
     if m:
         return json.loads(m.group(0))
     raise ValueError("No JSON found in response")
 
 
+# ── Claude API calls ──────────────────────────────────────────────────────────
+
 def run_icp_analysis(client: anthropic.Anthropic, product: str, icp: str, company_url: str) -> dict:
-    """Call Claude to score ICP fit and return structured analysis."""
+    """
+    Send a structured prompt to Claude asking it to score how well the target
+    company matches the vendor's ICP.
+
+    Returns a dict with keys: score, verdict, summary, strengths, gaps,
+    recommended_angle — parsed from Claude's JSON response.
+    """
+    # Build the prompt — Claude is instructed to return strict JSON so we can
+    # parse it reliably without brittle text extraction.
     prompt = f"""You are a GTM analyst. Analyze how well a target company fits a vendor's ICP.
 
 VENDOR PRODUCT:
@@ -172,13 +206,15 @@ Return ONLY valid JSON (no markdown, no extra text) with this exact schema:
   "recommended_angle": "<The single most compelling angle to lead with in outreach>"
 }}"""
 
+    # Use streaming so the request doesn't time out on slow connections;
+    # get_final_message() blocks until the full response is assembled.
     with client.messages.stream(
         model="claude-sonnet-4-5",
         max_tokens=1024,
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         full_text = stream.get_final_message().content
-        # get text block
+        # content is a list of blocks; extract the first text block
         text = next((b.text for b in full_text if b.type == "text"), "")
 
     return extract_json_block(text)
@@ -193,7 +229,14 @@ def run_sequence_generation(
     contact_role: str,
     angle: str,
 ) -> list[dict]:
-    """Generate a 4-email outreach sequence."""
+    """
+    Ask Claude to write a 4-email cold outreach sequence tailored to the
+    contact and company, using the recommended angle from the ICP analysis.
+
+    Returns a list of 4 dicts, each with: sequence, send_day, send_label,
+    subject, body.
+    """
+    # Use only the first name in salutations to keep emails personal
     first_name = contact_name.strip().split()[0] if contact_name.strip() else "there"
 
     prompt = f"""You are an elite B2B sales copywriter. Write a 4-email cold outreach sequence.
@@ -247,13 +290,13 @@ Return ONLY valid JSON (no markdown) with this exact schema:
 
     with client.messages.stream(
         model="claude-sonnet-4-5",
-        max_tokens=3000,
+        max_tokens=3000,  # 4 emails × ~150 words needs headroom
         messages=[{"role": "user", "content": prompt}],
     ) as stream:
         full_text = stream.get_final_message().content
         text = next((b.text for b in full_text if b.type == "text"), "")
 
-    # Parse JSON array
+    # Parse the JSON array — same fenced / bare fallback as extract_json_block
     m = re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, re.DOTALL)
     if m:
         return json.loads(m.group(1))
@@ -263,28 +306,37 @@ Return ONLY valid JSON (no markdown) with this exact schema:
     raise ValueError("No JSON array found in sequence response")
 
 
-# ── HubSpot ───────────────────────────────────────────────────────────────────
+# ── HubSpot CRM integration ───────────────────────────────────────────────────
 
 def hubspot_create_contact(api_key: str, contact_name: str, contact_role: str, company_url: str) -> tuple[bool, str, str]:
-    """Create a HubSpot contact. Returns (success, contact_id, message)."""
+    """
+    Create a new contact in HubSpot via the CRM v3 Contacts API.
+
+    Returns a 3-tuple: (success: bool, contact_id: str, message: str).
+    A 409 response means the contact already exists — we treat that as success
+    and reuse the existing record's ID.
+    """
+    # Split "First Last" into separate fields; HubSpot stores them that way
     parts = contact_name.strip().split(None, 1)
     firstname = parts[0] if parts else contact_name
-    lastname = parts[1] if len(parts) > 1 else ""
+    lastname  = parts[1] if len(parts) > 1 else ""
+
+    # Strip protocol and path to get a clean company domain for the 'company' field
     company = company_url.replace("https://", "").replace("http://", "").split("/")[0]
 
     payload = {
         "properties": {
-            "firstname": firstname,
-            "lastname": lastname,
-            "jobtitle": contact_role,
-            "company": company,
-            "website": company_url,
-            "hs_lead_status": "NEW",
+            "firstname":      firstname,
+            "lastname":       lastname,
+            "jobtitle":       contact_role,
+            "company":        company,
+            "website":        company_url,
+            "hs_lead_status": "NEW",   # marks this as a fresh outreach lead
         }
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
+        "Content-Type":  "application/json",
     }
     try:
         r = requests.post(
@@ -296,17 +348,26 @@ def hubspot_create_contact(api_key: str, contact_name: str, contact_role: str, c
         if r.status_code in (200, 201):
             contact_id = r.json().get("id", "")
             return True, contact_id, f"Contact created (ID: {contact_id})"
-        # 409 = already exists
+
+        # 409 Conflict = contact with this email already exists in HubSpot
         if r.status_code == 409:
             existing_id = r.json().get("message", "").split(":")[-1].strip()
             return True, existing_id, "Contact already exists — using existing record"
+
         return False, "", f"HubSpot error {r.status_code}: {r.text[:200]}"
     except Exception as e:
         return False, "", f"Request failed: {e}"
 
 
 def hubspot_log_email_note(api_key: str, contact_id: str, seq: dict, contact_name: str) -> tuple[bool, str]:
-    """Log an email as a Note engagement on a HubSpot contact."""
+    """
+    Log a single email from the outreach sequence as a Note on the HubSpot
+    contact. Notes appear in the contact's activity timeline.
+
+    associationTypeId 202 is the HubSpot-defined Note → Contact association.
+    Returns (success: bool, message: str).
+    """
+    # Format the note body so it's readable inside HubSpot
     body_text = (
         f"[Outreach Sequence — {seq['send_label']}]\n"
         f"Subject: {seq['subject']}\n\n"
@@ -314,19 +375,21 @@ def hubspot_log_email_note(api_key: str, contact_id: str, seq: dict, contact_nam
     )
     payload = {
         "properties": {
-            "hs_note_body": body_text,
-            "hs_timestamp": datetime.utcnow().isoformat() + "Z",
+            "hs_note_body":  body_text,
+            # ISO-8601 timestamp marks when the note was created
+            "hs_timestamp":  datetime.utcnow().isoformat() + "Z",
         },
+        # Associate the note with the contact we just created / looked up
         "associations": [
             {
-                "to": {"id": contact_id},
+                "to":    {"id": contact_id},
                 "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}],
             }
         ],
     }
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
+        "Content-Type":  "application/json",
     }
     try:
         r = requests.post(
@@ -343,14 +406,24 @@ def hubspot_log_email_note(api_key: str, contact_id: str, seq: dict, contact_nam
 
 
 def push_to_hubspot(api_key: str, contact_name: str, contact_role: str, company_url: str, emails: list[dict]):
-    """Create contact + log all 4 emails as notes. Returns log lines."""
+    """
+    Orchestrate the full HubSpot sync:
+      1. Create (or find) the contact record.
+      2. Log each of the 4 emails as a Note on that contact.
+
+    Returns a list of (icon, message) tuples for display in the UI.
+    Aborts early if contact creation fails — no point logging notes
+    without a contact to attach them to.
+    """
     log = []
 
+    # Step 1: create contact
     ok, contact_id, msg = hubspot_create_contact(api_key, contact_name, contact_role, company_url)
     log.append(("✅" if ok else "❌", msg))
     if not ok:
-        return log
+        return log  # bail out — subsequent note calls would have no valid contact_id
 
+    # Step 2: log all 4 emails as notes on the contact
     for email in emails:
         e_ok, e_msg = hubspot_log_email_note(api_key, contact_id, email, contact_name)
         log.append(("✅" if e_ok else "❌", e_msg))
@@ -359,6 +432,8 @@ def push_to_hubspot(api_key: str, contact_name: str, contact_role: str, company_
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+# Keeps the sidebar clean — just a usage guide and attribution.
+# API keys are never shown here; they load silently from st.secrets above.
 
 with st.sidebar:
     st.markdown("### How it works")
@@ -372,7 +447,7 @@ with st.sidebar:
     st.caption("Powered by Claude Sonnet 4.5")
 
 
-# ── Main layout ───────────────────────────────────────────────────────────────
+# ── Hero header ───────────────────────────────────────────────────────────────
 
 st.markdown("""
 <div class="hero">
@@ -381,12 +456,16 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Input Section ─────────────────────────────────────────────────────────────
+
+# ── Input form ────────────────────────────────────────────────────────────────
+# Two equal columns: left for vendor context (product + ICP), right for the
+# specific target (company URL, contact name, role).
 
 col_a, col_b = st.columns([1, 1], gap="large")
 
 with col_a:
     st.markdown('<div class="card-title">Your Product & ICP</div>', unsafe_allow_html=True)
+
     product_desc = st.text_area(
         "Product Description",
         height=130,
@@ -402,12 +481,13 @@ with col_a:
 
 with col_b:
     st.markdown('<div class="card-title">Target</div>', unsafe_allow_html=True)
+
     company_url = st.text_input(
         "Target Company URL",
         placeholder="https://www.acme.com",
         help="The company's website — Claude will infer context from the domain.",
     )
-    st.markdown("")
+    st.markdown("")  # vertical spacer
     contact_name = st.text_input(
         "Contact Full Name",
         placeholder="Sarah Chen",
@@ -419,7 +499,10 @@ with col_b:
 
 st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-# ── Analyse Button ────────────────────────────────────────────────────────────
+
+# ── Analyse button ────────────────────────────────────────────────────────────
+# The button is disabled until all 5 required fields are filled in.
+# We display a specific list of what's still missing to guide the user.
 
 can_run = all([product_desc, icp_criteria, company_url, contact_name, contact_role])
 
@@ -432,43 +515,46 @@ with run_col:
         use_container_width=True,
     )
 
+# Show a helpful hint listing exactly which fields still need filling
 if not can_run and not run_btn:
     missing = []
-    if not product_desc:
-        missing.append("Product Description")
-    if not icp_criteria:
-        missing.append("ICP Criteria")
-    if not company_url:
-        missing.append("Company URL")
-    if not contact_name:
-        missing.append("Contact Name")
-    if not contact_role:
-        missing.append("Contact Role")
+    if not product_desc:  missing.append("Product Description")
+    if not icp_criteria:  missing.append("ICP Criteria")
+    if not company_url:   missing.append("Company URL")
+    if not contact_name:  missing.append("Contact Name")
+    if not contact_role:  missing.append("Contact Role")
     if missing:
         st.info(f"Complete to enable analysis: {' · '.join(missing)}", icon="ℹ️")
 
+
 # ── Results ───────────────────────────────────────────────────────────────────
+# All output is rendered inside this block, which only executes after the user
+# clicks the button with all fields populated.
 
 if run_btn and can_run:
+    # Instantiate the Anthropic client with the key loaded from secrets
     client = anthropic.Anthropic(api_key=anthropic_key)
 
-    # ── ICP Analysis ──────────────────────────────────────────────────────────
+    # ── Step 1: ICP analysis ──────────────────────────────────────────────────
     st.markdown("## ICP Fit Analysis")
     with st.spinner("Analyzing company-ICP fit…"):
         try:
             analysis = run_icp_analysis(client, product_desc, icp_criteria, company_url)
+            # Cache in session_state so refreshes don't re-run the API call
             st.session_state["analysis"] = analysis
         except Exception as e:
             st.error(f"Analysis failed: {e}")
             st.stop()
 
-    analysis = st.session_state.get("analysis", {})
-    score = analysis.get("score", 0)
-    css_class = score_class(score)
+    analysis  = st.session_state.get("analysis", {})
+    score     = analysis.get("score", 0)
+    css_class = score_class(score)  # determines badge colour
 
+    # Render score badge (narrow column) + assessment card (wide column) side by side
     c1, c2 = st.columns([1, 2], gap="large")
 
     with c1:
+        # Circular score badge with colour coded by fit level
         st.markdown(f"""
 <div class="card" style="text-align:center;">
   <div class="card-title">ICP Fit Score</div>
@@ -479,6 +565,7 @@ if run_btn and can_run:
 """, unsafe_allow_html=True)
 
     with c2:
+        # Assessment card: two-sentence summary + strengths + gaps as chips
         st.markdown(f"""
 <div class="card">
   <div class="card-title">Assessment</div>
@@ -490,7 +577,7 @@ if run_btn and can_run:
 </div>
 """, unsafe_allow_html=True)
 
-    # Recommended angle
+    # Highlight the single recommended outreach angle — passed into email generation next
     angle = analysis.get("recommended_angle", "")
     st.markdown(f"""
 <div class="card" style="background:#f0f4ff; border-color:#c7d2fe;">
@@ -501,7 +588,7 @@ if run_btn and can_run:
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── Email Sequence ─────────────────────────────────────────────────────────
+    # ── Step 2: Email sequence generation ────────────────────────────────────
     st.markdown("## 📧 Personalised 4-Email Sequence")
     with st.spinner("Generating outreach sequence…"):
         try:
@@ -515,29 +602,37 @@ if run_btn and can_run:
             st.stop()
 
     emails = st.session_state.get("emails", [])
+
+    # Each email gets a distinct accent colour on its left border
     border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
 
     for i, email in enumerate(emails):
         color = border_colors[i % len(border_colors)]
+        # Calculate a suggested calendar date based on send_day offset from today
         send_date = (datetime.today() + timedelta(days=email.get("send_day", 1) - 1)).strftime("%b %d, %Y")
+
+        # Escape < and > in the email body to prevent HTML injection
+        safe_body = email.get("body", "").replace("<", "&lt;").replace(">", "&gt;")
 
         st.markdown(f"""
 <div class="email-card" style="border-left-color:{color};">
   <div class="email-seq">Email {email.get('sequence','')}</div>
   <div class="email-timing">⏱ {email.get('send_label','')} &nbsp;·&nbsp; Suggested send: {send_date}</div>
   <div class="email-subject">Subject: {email.get('subject','')}</div>
-  <div class="email-body">{email.get('body','').replace('<','&lt;').replace('>','&gt;')}</div>
+  <div class="email-body">{safe_body}</div>
 </div>
 """, unsafe_allow_html=True)
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── HubSpot Sync ───────────────────────────────────────────────────────────
+    # ── Step 3: HubSpot sync ──────────────────────────────────────────────────
     st.markdown("## 🔶 HubSpot Integration")
 
     if not hubspot_key:
-        st.warning("Add your HubSpot Private App Token in the sidebar to enable sync.", icon="🔑")
+        # Secret not configured — show a warning instead of a broken button
+        st.warning("HubSpot API key not configured. Add HUBSPOT_API_KEY to Streamlit secrets.", icon="🔑")
     else:
+        # Informational banner summarising what the push button will do
         st.markdown(f"""
 <div class="hs-banner">
   <div style="font-size:2rem;">🔶</div>
@@ -559,6 +654,7 @@ if run_btn and can_run:
 
         if hs_btn:
             with st.spinner("Syncing with HubSpot…"):
+                # Returns a list of (icon, message) tuples — one per API call
                 log = push_to_hubspot(
                     hubspot_key,
                     contact_name,
@@ -566,6 +662,7 @@ if run_btn and can_run:
                     company_url,
                     emails,
                 )
+            # Display each result line as a success or error message
             for icon, msg in log:
                 if icon == "✅":
                     st.success(f"{icon} {msg}")
@@ -573,4 +670,5 @@ if run_btn and can_run:
                     st.error(f"{icon} {msg}")
 
 elif run_btn and not can_run:
-    st.error("Please fill in all required fields and add your Anthropic API key.")
+    # Shouldn't normally be reachable (button is disabled), but handles edge cases
+    st.error("Please fill in all required fields before running the analysis.")
