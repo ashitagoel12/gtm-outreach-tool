@@ -528,69 +528,34 @@ if not can_run and not run_btn:
         st.info(f"Complete to enable analysis: {' · '.join(missing)}", icon="ℹ️")
 
 
-# ── Results ───────────────────────────────────────────────────────────────────
-# All output is rendered inside this block, which only executes after the user
-# clicks the button with all fields populated.
+# ── Step 1: Run analysis when button clicked ──────────────────────────────────
+# This block ONLY runs the Claude API calls and stores results in session_state.
+# Rendering is handled separately below so results survive subsequent re-runs
+# (e.g. when the user types their HubSpot token or clicks the push button).
 
 if run_btn and can_run:
-    # Instantiate the Anthropic client with the key loaded from secrets
     client = anthropic.Anthropic(api_key=anthropic_key)
 
-    # ── Step 1: ICP analysis ──────────────────────────────────────────────────
-    st.markdown("## ICP Fit Analysis")
+    # Clear any previous results so stale data never bleeds into a new run
+    for key in ("analysis", "emails", "hs_sync_log"):
+        st.session_state.pop(key, None)
+
+    # Store the contact details that were active at analysis time so the
+    # HubSpot section uses the right values even after subsequent re-runs
+    st.session_state["_contact_name"] = contact_name
+    st.session_state["_contact_role"] = contact_role
+    st.session_state["_company_url"]  = company_url
+
     with st.spinner("Analyzing company-ICP fit…"):
         try:
             analysis = run_icp_analysis(client, product_desc, icp_criteria, company_url)
-            # Cache in session_state so refreshes don't re-run the API call
             st.session_state["analysis"] = analysis
         except Exception as e:
             st.error(f"Analysis failed: {e}")
             st.stop()
 
-    analysis  = st.session_state.get("analysis", {})
-    score     = analysis.get("score", 0)
-    css_class = score_class(score)  # determines badge colour
+    angle = st.session_state["analysis"].get("recommended_angle", "")
 
-    # Render score badge (narrow column) + assessment card (wide column) side by side
-    c1, c2 = st.columns([1, 2], gap="large")
-
-    with c1:
-        # Circular score badge with colour coded by fit level
-        st.markdown(f"""
-<div class="card" style="text-align:center;">
-  <div class="card-title">ICP Fit Score</div>
-  <div class="score-badge {css_class}">{score}</div>
-  <div style="font-size:.75rem; color:#6b7280; margin-bottom:6px;">out of 10</div>
-  <div style="font-size:1rem; font-weight:700; color:#1a1f36;">{analysis.get('verdict','—')}</div>
-</div>
-""", unsafe_allow_html=True)
-
-    with c2:
-        # Assessment card: two-sentence summary + strengths + gaps as chips
-        st.markdown(f"""
-<div class="card">
-  <div class="card-title">Assessment</div>
-  <p style="color:#374151; margin-bottom:14px;">{analysis.get('summary','')}</p>
-  <div class="card-title">Strengths</div>
-  <div style="margin-bottom:12px;">{''.join(f'<span class="chip">✓ {s}</span>' for s in analysis.get('strengths',[]))}</div>
-  <div class="card-title">Gaps</div>
-  <div>{''.join(f'<span class="chip" style="background:#fff1f2;color:#be123c;">✗ {g}</span>' for g in analysis.get('gaps',[]))}</div>
-</div>
-""", unsafe_allow_html=True)
-
-    # Highlight the single recommended outreach angle — passed into email generation next
-    angle = analysis.get("recommended_angle", "")
-    st.markdown(f"""
-<div class="card" style="background:#f0f4ff; border-color:#c7d2fe;">
-  <div class="card-title" style="color:#4338ca;">🎯 Recommended Outreach Angle</div>
-  <p style="color:#1e1b4b; font-size:.95rem; margin:0;">{angle}</p>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # ── Step 2: Email sequence generation ────────────────────────────────────
-    st.markdown("## 📧 Personalised 4-Email Sequence")
     with st.spinner("Generating outreach sequence…"):
         try:
             emails = run_sequence_generation(
@@ -602,17 +567,75 @@ if run_btn and can_run:
             st.error(f"Sequence generation failed: {e}")
             st.stop()
 
-    emails = st.session_state.get("emails", [])
+elif run_btn and not can_run:
+    st.error("Please fill in all required fields before running the analysis.")
 
-    # Each email gets a distinct accent colour on its left border
+
+# ── Step 2: Render results whenever session_state has them ────────────────────
+# This block is INDEPENDENT of run_btn. It fires on every script re-run as long
+# as analysis + emails exist — including when the user types their HubSpot token
+# or clicks "Push to HubSpot". This is what keeps the UI from disappearing.
+
+if st.session_state.get("analysis") and st.session_state.get("emails"):
+
+    analysis = st.session_state["analysis"]
+    emails   = st.session_state["emails"]
+
+    # Use the contact details that were snapshotted when analysis ran
+    _contact_name = st.session_state.get("_contact_name", contact_name)
+    _contact_role = st.session_state.get("_contact_role", contact_role)
+    _company_url  = st.session_state.get("_company_url",  company_url)
+
+    score     = analysis.get("score", 0)
+    css_class = score_class(score)
+
+    # ── ICP analysis display ──────────────────────────────────────────────────
+    st.markdown("## ICP Fit Analysis")
+
+    c1, c2 = st.columns([1, 2], gap="large")
+
+    with c1:
+        # Circular score badge colour-coded by fit level
+        st.markdown(f"""
+<div class="card" style="text-align:center;">
+  <div class="card-title">ICP Fit Score</div>
+  <div class="score-badge {css_class}">{score}</div>
+  <div style="font-size:.75rem; color:#6b7280; margin-bottom:6px;">out of 10</div>
+  <div style="font-size:1rem; font-weight:700; color:#1a1f36;">{analysis.get('verdict','—')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+    with c2:
+        # Assessment card: summary + strengths + gaps as chips
+        st.markdown(f"""
+<div class="card">
+  <div class="card-title">Assessment</div>
+  <p style="color:#374151; margin-bottom:14px;">{analysis.get('summary','')}</p>
+  <div class="card-title">Strengths</div>
+  <div style="margin-bottom:12px;">{''.join(f'<span class="chip">✓ {s}</span>' for s in analysis.get('strengths',[]))}</div>
+  <div class="card-title">Gaps</div>
+  <div>{''.join(f'<span class="chip" style="background:#fff1f2;color:#be123c;">✗ {g}</span>' for g in analysis.get('gaps',[]))}</div>
+</div>
+""", unsafe_allow_html=True)
+
+    angle = analysis.get("recommended_angle", "")
+    st.markdown(f"""
+<div class="card" style="background:#f0f4ff; border-color:#c7d2fe;">
+  <div class="card-title" style="color:#4338ca;">🎯 Recommended Outreach Angle</div>
+  <p style="color:#1e1b4b; font-size:.95rem; margin:0;">{angle}</p>
+</div>
+""", unsafe_allow_html=True)
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    # ── Email sequence display ────────────────────────────────────────────────
+    st.markdown("## 📧 Personalised 4-Email Sequence")
+
     border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
 
     for i, email in enumerate(emails):
-        color = border_colors[i % len(border_colors)]
-        # Calculate a suggested calendar date based on send_day offset from today
+        color     = border_colors[i % len(border_colors)]
         send_date = (datetime.today() + timedelta(days=email.get("send_day", 1) - 1)).strftime("%b %d, %Y")
-
-        # Escape < and > in the email body to prevent HTML injection
         safe_body = email.get("body", "").replace("<", "&lt;").replace(">", "&gt;")
 
         st.markdown(f"""
@@ -626,24 +649,23 @@ if run_btn and can_run:
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── Step 3: HubSpot sync ──────────────────────────────────────────────────
-    # HubSpot sync is optional. The user provides their own Personal Access
-    # Token here at runtime — it is never stored server-side or persisted.
+    # ── HubSpot sync ──────────────────────────────────────────────────────────
+    # Rendered here (outside the run_btn block) so it persists across re-runs.
+    # key="hs_token" tells Streamlit to preserve the token value in widget state
+    # so it survives the re-run triggered by clicking "Push to HubSpot".
     st.markdown("## 🔶 HubSpot Integration *(optional)*")
 
-    # Informational banner summarising what the push button will do
     st.markdown(f"""
 <div class="hs-banner">
   <div style="font-size:2rem;">🔶</div>
   <div>
     <h3>Sync to HubSpot</h3>
-    <p>Creates a contact record for <strong>{contact_name}</strong> at <strong>{company_url}</strong>
+    <p>Creates a contact record for <strong>{_contact_name}</strong> at <strong>{_company_url}</strong>
        and logs all 4 emails as Notes — ready to start your sequence.</p>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-    # Help card linking to HubSpot's token documentation
     st.markdown("""
 <div class="card" style="background:#fff7f0; border-color:#fde8d8; margin-bottom:16px;">
   <div class="card-title" style="color:#c2500a;">🔑 Where to find your token</div>
@@ -660,44 +682,50 @@ if run_btn and can_run:
 </div>
 """, unsafe_allow_html=True)
 
-    # Password-masked input — token stays in the browser session only
+    # key="hs_token" is critical — it lets Streamlit persist the typed value in
+    # st.session_state["hs_token"] across re-runs so the token isn't lost when
+    # the push button is clicked and the script re-executes from the top.
     hs_token = st.text_input(
         "HubSpot Personal Access Token",
         type="password",
         placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         help="Your HubSpot Private App token. Never stored server-side.",
+        key="hs_token",
     )
 
     if hs_token:
-        # Token provided — show the push button
         hs_col, _ = st.columns([1, 3])
         with hs_col:
             hs_btn = st.button(
                 "🔶 Push to HubSpot",
                 type="secondary",
                 use_container_width=True,
+                key="hs_push_btn",
             )
 
         if hs_btn:
+            # Clear any previous sync log before running a fresh push
+            st.session_state.pop("hs_sync_log", None)
+
             with st.spinner("Syncing with HubSpot…"):
-                # Pass the user-provided token; returns (icon, message) tuples
-                log = push_to_hubspot(
-                    hs_token,       # user-provided at runtime, not from secrets
-                    contact_name,
-                    contact_role,
-                    company_url,
+                sync_log = push_to_hubspot(
+                    hs_token,
+                    _contact_name,
+                    _contact_role,
+                    _company_url,
                     emails,
                 )
-            # Display each API call result as a success or error message
-            for icon, msg in log:
-                if icon == "✅":
-                    st.success(f"{icon} {msg}")
-                else:
-                    st.error(f"{icon} {msg}")
+            # Persist the log so it remains visible on subsequent re-runs
+            st.session_state["hs_sync_log"] = sync_log
+
     else:
-        # No token entered yet — prompt instead of showing a broken button
         st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
 
-elif run_btn and not can_run:
-    # Shouldn't normally be reachable (button is disabled), but handles edge cases
-    st.error("Please fill in all required fields before running the analysis.")
+    # Render the sync log if it exists (persists across re-runs via session_state)
+    if st.session_state.get("hs_sync_log"):
+        st.markdown("**Sync results:**")
+        for icon, msg in st.session_state["hs_sync_log"]:
+            if icon == "✅":
+                st.success(f"{icon} {msg}")
+            else:
+                st.error(f"{icon} {msg}")
