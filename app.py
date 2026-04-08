@@ -5,16 +5,15 @@ import json
 import re
 from datetime import datetime, timedelta
 
-# ── Secrets: prefer Streamlit Cloud secrets, fall back to session input ───────
+# ── Secrets: loaded silently from Streamlit Cloud secrets ────────────────────
 def _secret(key: str) -> str:
-    """Return a secret from st.secrets if available, else empty string."""
     try:
         return st.secrets.get(key, "")
     except Exception:
         return ""
 
-_ANTHROPIC_KEY_DEFAULT = _secret("ANTHROPIC_API_KEY")
-_HUBSPOT_KEY_DEFAULT   = _secret("HUBSPOT_API_KEY")
+anthropic_key = _secret("ANTHROPIC_API_KEY")
+hubspot_key   = _secret("HUBSPOT_API_KEY")
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -362,25 +361,6 @@ def push_to_hubspot(api_key: str, contact_name: str, contact_role: str, company_
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## ⚙️ Configuration")
-    st.markdown('<div class="sidebar-section">API Keys</div>', unsafe_allow_html=True)
-
-    anthropic_key = st.text_input(
-        "Anthropic API Key",
-        value=_ANTHROPIC_KEY_DEFAULT,
-        type="password",
-        placeholder="sk-ant-..." if not _ANTHROPIC_KEY_DEFAULT else "Loaded from secrets ✓",
-        help="Get yours at console.anthropic.com",
-    )
-    hubspot_key = st.text_input(
-        "HubSpot Private App Token",
-        value=_HUBSPOT_KEY_DEFAULT,
-        type="password",
-        placeholder="pat-na1-..." if not _HUBSPOT_KEY_DEFAULT else "Loaded from secrets ✓",
-        help="Create a Private App in HubSpot → Settings → Integrations",
-    )
-
-    st.divider()
     st.markdown("### How it works")
     st.markdown("""
 1. **Fill in** your product, ICP, target company, and contact
@@ -388,7 +368,6 @@ with st.sidebar:
 3. **Generate** — 4 personalised emails with send timing
 4. **Sync** — Push contact + emails to HubSpot with one click
 """)
-
     st.divider()
     st.caption("Powered by Claude Sonnet 4.5")
 
@@ -442,7 +421,7 @@ st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
 # ── Analyse Button ────────────────────────────────────────────────────────────
 
-can_run = all([anthropic_key, product_desc, icp_criteria, company_url, contact_name, contact_role])
+can_run = all([product_desc, icp_criteria, company_url, contact_name, contact_role])
 
 run_col, _ = st.columns([1, 3])
 with run_col:
@@ -455,8 +434,6 @@ with run_col:
 
 if not can_run and not run_btn:
     missing = []
-    if not anthropic_key:
-        missing.append("Anthropic API Key (sidebar)")
     if not product_desc:
         missing.append("Product Description")
     if not icp_criteria:
