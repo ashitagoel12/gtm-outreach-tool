@@ -9,6 +9,8 @@ import anthropic
 import requests
 import json
 import re
+import csv
+import io
 from datetime import datetime, timedelta
 
 
@@ -196,6 +198,39 @@ def build_icp_string(
     if tech_stack:                  parts.append(f"Uses: {', '.join(tech_stack)}")
     if pain_points:                 parts.append(f"Key pain points: {', '.join(pain_points)}")
     return "; ".join(parts) if parts else "No specific ICP criteria defined"
+
+
+# ── CSV export helper ────────────────────────────────────────────────────────
+
+def build_csv(emails: list, tone: str, contact_name: str, company_url: str) -> str:
+    """
+    Build a UTF-8 CSV string from the email sequence for st.download_button.
+    Reads current widget states (subject_N, body_N, approve_N) so edits and
+    approval decisions made in the Review step are reflected in the export.
+    Returns the CSV as a plain string.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
+    writer.writerow([
+        "Email #", "Send Day", "Send Label", "Subject", "Body",
+        "Tone", "Included", "Contact", "Company",
+    ])
+    for i, email in enumerate(emails):
+        subject  = st.session_state.get(f"subject_{i}", email.get("subject", ""))
+        body     = st.session_state.get(f"body_{i}",    email.get("body", ""))
+        included = "Yes" if st.session_state.get(f"approve_{i}", True) else "No"
+        writer.writerow([
+            email.get("sequence", i + 1),
+            email.get("send_day", ""),
+            email.get("send_label", ""),
+            subject,
+            body,
+            tone,
+            included,
+            contact_name,
+            company_url,
+        ])
+    return buf.getvalue()
 
 
 # ── LinkedIn enrichment (placeholder — Apollo/Clay integration in V3) ─────────
@@ -916,6 +951,34 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
 
         st.markdown("</div>", unsafe_allow_html=True)
         st.markdown("")  # spacer between cards
+
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+    # ── CSV Export ────────────────────────────────────────────────────────────
+    # build_csv() reads current widget states so the download reflects any
+    # inline edits and includes an "Included: Yes/No" column per email.
+    st.markdown("## 📥 Export Sequence")
+
+    csv_data = build_csv(emails, _tone, _contact_name, _company_url)
+    csv_filename = (
+        f"outreach_{_contact_name.replace(' ', '_')}_"
+        f"{datetime.today().strftime('%Y%m%d')}.csv"
+    )
+
+    dl_col, _ = st.columns([1, 3])
+    with dl_col:
+        st.download_button(
+            label="⬇️ Download as CSV",
+            data=csv_data,
+            file_name=csv_filename,
+            mime="text/csv",
+            use_container_width=True,
+            help="Downloads all 4 emails with subject, body, send timing, tone, and approval status.",
+        )
+    st.caption(
+        f"Includes all {len(emails)} emails with current edits and approval status. "
+        "Import into Google Sheets, Excel, or your outreach tool."
+    )
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
