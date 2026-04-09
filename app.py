@@ -433,19 +433,64 @@ def hubspot_log_email_note(
         return False, f"Request failed: {e}"
 
 
+def hubspot_create_task(
+    api_key: str, contact_id: str, seq: dict
+) -> tuple:
+    """
+    Create a HubSpot Task for one email in the sequence.
+    The task is due on the email's send_day (relative to today) and is
+    associated with the contact via associationTypeId 216 (Task → Contact).
+
+    Returns (success: bool, message: str).
+    """
+    due_dt = datetime.utcnow() + timedelta(days=seq.get("send_day", 1) - 1)
+    payload = {
+        "properties": {
+            "hs_task_subject":  f"Send Email {seq['sequence']}: {seq['subject']}",
+            "hs_task_body":     seq["body"],
+            "hs_timestamp":     due_dt.isoformat() + "Z",   # task due date
+            "hs_task_status":   "NOT_STARTED",
+            "hs_task_type":     "EMAIL",
+            "hs_task_priority": "MEDIUM",
+        },
+        "associations": [{
+            "to":    {"id": contact_id},
+            "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 216}],
+        }],
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        r = requests.post("https://api.hubapi.com/crm/v3/objects/tasks",
+                          headers=headers, json=payload, timeout=15)
+        if r.status_code in (200, 201):
+            return True, f"Email {seq['sequence']} task created (due {due_dt.strftime('%b %d')}, Task ID: {r.json().get('id','')})"
+        return False, f"Task error {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        return False, f"Request failed: {e}"
+
+
 def push_to_hubspot(
     api_key: str, contact_name: str, contact_role: str,
     company_url: str, emails: list
 ) -> list:
-    """Create contact + log all emails as Notes. Returns [(icon, message), ...]."""
+    """
+    Create contact, then for each approved email:
+      1. Log it as a Note (for history/activity feed)
+      2. Create a Task (for to-do reminders with a due date)
+    Returns [(icon, message), ...] log entries.
+    """
     log = []
     ok, contact_id, msg = hubspot_create_contact(api_key, contact_name, contact_role, company_url)
     log.append(("✅" if ok else "❌", msg))
     if not ok:
         return log
     for email in emails:
+        # Note — preserves the email body in the activity timeline
         e_ok, e_msg = hubspot_log_email_note(api_key, contact_id, email, contact_name)
         log.append(("✅" if e_ok else "❌", e_msg))
+        # Task — creates a reminder with a due date matching the send_day
+        t_ok, t_msg = hubspot_create_task(api_key, contact_id, email)
+        log.append(("✅" if t_ok else "❌", t_msg))
     return log
 
 
