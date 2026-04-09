@@ -650,6 +650,11 @@ if run_btn and can_run:
     # Clear stale results from any previous run
     for k in ("analysis", "seniority", "emails", "hs_sync_log"):
         st.session_state.pop(k, None)
+    # Also reset per-email edit/approve widget states so the new sequence
+    # renders with fresh defaults (not values carried over from the last run).
+    for k in list(st.session_state.keys()):
+        if k.startswith(("approve_", "subject_", "body_")):
+            st.session_state.pop(k, None)
 
     # Snapshot the inputs so the display block uses consistent values
     # even if the user edits the form fields after analysis completes.
@@ -791,13 +796,28 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── Email Sequence ────────────────────────────────────────────────────────
+    # ── Email Sequence — Review & Approve ────────────────────────────────────
+    # Each email is shown as an editable card with a checkbox.
+    # Users can tweak subject/body inline and deselect emails before HubSpot sync.
+    # Widget keys (approve_N, subject_N, body_N) are cleared at the start of
+    # Block 1 so every new analysis resets to fresh defaults.
+
     st.markdown(
-        f"## 📧 Personalised 4-Email Sequence &nbsp;"
+        f"## 📧 Review & Approve Email Sequence &nbsp;"
         f'<span style="font-size:.7rem;font-weight:700;letter-spacing:.08em;'
         f'text-transform:uppercase;background:#eef2ff;color:#4338ca;'
         f'border-radius:20px;padding:3px 12px;">✍️ {_tone}</span>',
         unsafe_allow_html=True,
+    )
+
+    # Approval summary — count how many are currently checked
+    approved_count = sum(
+        1 for i in range(len(emails))
+        if st.session_state.get(f"approve_{i}", True)
+    )
+    st.caption(
+        f"**{approved_count} of {len(emails)} emails approved** for HubSpot sync. "
+        "Edit subjects/bodies inline, then uncheck any you want to exclude."
     )
 
     border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
@@ -805,23 +825,73 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
     for i, email in enumerate(emails):
         color     = border_colors[i % len(border_colors)]
         send_date = (datetime.today() + timedelta(days=email.get("send_day", 1) - 1)).strftime("%b %d, %Y")
-        safe_body = email.get("body", "").replace("<", "&lt;").replace(">", "&gt;")
 
-        st.markdown(f"""
-<div class="email-card" style="border-left-color:{color};">
-  <div class="email-seq">Email {email.get('sequence','')}</div>
-  <div class="email-timing">⏱ {email.get('send_label','')} &nbsp;·&nbsp; Suggested send: {send_date}</div>
-  <div class="email-subject">Subject: {email.get('subject','')}</div>
-  <div class="email-body">{safe_body}</div>
-</div>
-""", unsafe_allow_html=True)
+        # Read current approval state (defaults True on first render)
+        is_approved = st.session_state.get(f"approve_{i}", True)
+        card_opacity = "1" if is_approved else "0.45"
+        card_border  = color if is_approved else "#d1d5db"
+
+        # Card wrapper — opacity signals excluded state visually
+        st.markdown(
+            f'<div style="border:1px solid {card_border};border-left:4px solid {card_border};'
+            f'border-radius:10px;padding:18px 22px;margin-bottom:6px;'
+            f'background:#fff;opacity:{card_opacity};transition:opacity .2s;">',
+            unsafe_allow_html=True,
+        )
+
+        hdr_col, chk_col = st.columns([6, 1])
+        with hdr_col:
+            st.markdown(
+                f'<div class="email-seq">Email {email.get("sequence","")}</div>'
+                f'<div class="email-timing">⏱ {email.get("send_label","")} &nbsp;·&nbsp; Suggested send: {send_date}</div>',
+                unsafe_allow_html=True,
+            )
+        with chk_col:
+            st.checkbox(
+                "Include",
+                value=True,
+                key=f"approve_{i}",
+            )
+
+        # Editable subject — value= sets default; key preserves edits across reruns
+        st.text_input(
+            "Subject",
+            value=email.get("subject", ""),
+            key=f"subject_{i}",
+            label_visibility="visible",
+        )
+        # Editable body
+        st.text_area(
+            "Body",
+            value=email.get("body", ""),
+            key=f"body_{i}",
+            height=190,
+            label_visibility="visible",
+        )
+
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("")  # spacer between cards
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
     # ── HubSpot Sync ──────────────────────────────────────────────────────────
     # Rendered here (outside run_btn block) so it persists across re-runs.
     # key="hs_token" preserves the typed token value in Streamlit widget state.
+    # Only approved + edited emails are pushed (assembled from widget states).
     st.markdown("## 🔶 HubSpot Integration *(optional)*")
+
+    # Assemble the final list of emails to sync: only approved ones, with any
+    # inline edits from the text_input / text_area widgets applied.
+    approved_emails = [
+        {
+            **emails[i],
+            "subject": st.session_state.get(f"subject_{i}", emails[i]["subject"]),
+            "body":    st.session_state.get(f"body_{i}",    emails[i]["body"]),
+        }
+        for i in range(len(emails))
+        if st.session_state.get(f"approve_{i}", True)
+    ]
+    n_approved = len(approved_emails)
 
     st.markdown(f"""
 <div class="hs-banner">
@@ -829,7 +899,7 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
   <div>
     <h3>Sync to HubSpot</h3>
     <p>Creates a contact for <strong>{_contact_name}</strong> at <strong>{_company_url}</strong>
-       and logs all 4 emails as Notes.</p>
+       and logs <strong>{n_approved} approved email{'s' if n_approved != 1 else ''}</strong> as Notes + Tasks.</p>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -839,7 +909,8 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
   <div class="card-title" style="color:#c2500a;">🔑 Where to find your token</div>
   <p style="color:#374151;font-size:.875rem;margin:0;">
     <strong>Settings → Integrations → Private Apps</strong>.
-    Needs <code>crm.objects.contacts.write</code> and <code>crm.objects.notes.write</code> scopes.<br><br>
+    Needs <code>crm.objects.contacts.write</code>, <code>crm.objects.notes.write</code>
+    and <code>crm.objects.tasks.write</code> scopes.<br><br>
     <a href="https://knowledge.hubspot.com/integrations/how-do-i-get-my-hubspot-api-key"
        target="_blank" style="color:#c2500a;">📖 HubSpot API key documentation →</a>
   </p>
@@ -855,16 +926,23 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
     )
 
     if hs_token:
-        hs_col, _ = st.columns([1, 3])
-        with hs_col:
-            hs_btn = st.button("🔶 Push to HubSpot", type="secondary",
-                               use_container_width=True, key="hs_push_btn")
-        if hs_btn:
-            st.session_state.pop("hs_sync_log", None)
-            with st.spinner("Syncing with HubSpot…"):
-                sync_log = push_to_hubspot(hs_token, _contact_name, _contact_role,
-                                           _company_url, emails)
-            st.session_state["hs_sync_log"] = sync_log
+        if n_approved == 0:
+            st.warning("No emails are approved — tick at least one checkbox above before syncing.", icon="⚠️")
+        else:
+            hs_col, _ = st.columns([1, 3])
+            with hs_col:
+                hs_btn = st.button(
+                    f"🔶 Push {n_approved} Email{'s' if n_approved != 1 else ''} to HubSpot",
+                    type="secondary",
+                    use_container_width=True,
+                    key="hs_push_btn",
+                )
+            if hs_btn:
+                st.session_state.pop("hs_sync_log", None)
+                with st.spinner("Syncing with HubSpot…"):
+                    sync_log = push_to_hubspot(hs_token, _contact_name, _contact_role,
+                                               _company_url, approved_emails)
+                st.session_state["hs_sync_log"] = sync_log
     else:
         st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
 
