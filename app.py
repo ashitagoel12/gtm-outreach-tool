@@ -43,6 +43,14 @@ SENIORITY_COLOURS = {
     "C-Level":     "#ef4444",
 }
 
+# ── Email tone options ────────────────────────────────────────────────────────
+# Each entry: (display label, description fed to Claude in the prompt)
+TONES = {
+    "Professional":          "formal, polished, and business-focused — confident but not pushy",
+    "Casual & Friendly":     "warm, conversational, and approachable — like a message from a colleague",
+    "Direct & No-Nonsense":  "terse, value-first, zero fluff — respect the reader's time above all",
+}
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -310,12 +318,16 @@ def run_sequence_generation(
     contact_name: str,
     contact_role: str,
     angle: str,
+    tone: str = "Professional",
 ) -> list:
     """
     Generate a 4-email cold outreach sequence.
     Returns list of dicts: sequence, send_day, send_label, subject, body.
+    `tone` must be one of the keys in TONES; its description is injected into
+    the prompt so Claude calibrates vocabulary, sentence length, and formality.
     """
-    first_name = contact_name.strip().split()[0] if contact_name.strip() else "there"
+    first_name  = contact_name.strip().split()[0] if contact_name.strip() else "there"
+    tone_desc   = TONES.get(tone, TONES["Professional"])
 
     prompt = f"""You are an elite B2B sales copywriter. Write a 4-email cold outreach sequence.
 
@@ -324,6 +336,7 @@ ICP CRITERIA: {icp}
 TARGET COMPANY: {company_url}
 CONTACT: {contact_name}, {contact_role}
 LEADING ANGLE: {angle}
+EMAIL TONE: {tone} — {tone_desc}
 
 Guidelines:
 - Email 1 (Day 1): Hyper-personalised opener, reference their company, one clear value prop, soft CTA
@@ -331,7 +344,7 @@ Guidelines:
 - Email 3 (Day 9): Brief social proof / mini case study, direct ask for a call
 - Email 4 (Day 17): Polite breakup email, leave door open, very short
 
-Each email: under 150 words, human tone, NO "I hope this finds you well".
+Each email: under 150 words, tone MUST match "{tone}" throughout, NO "I hope this finds you well".
 Use first name: {first_name}
 
 Return ONLY valid JSON (no markdown):
@@ -576,6 +589,30 @@ icp_string = build_icp_string(
 
 st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
+# ── Email tone selector ───────────────────────────────────────────────────────
+# Radio buttons let the user control vocabulary and formality before generation.
+# The selected label maps to a detailed description injected into the Claude prompt.
+st.markdown("### ✍️ Email Tone")
+tone_col, _ = st.columns([2, 1])
+with tone_col:
+    email_tone = st.radio(
+        "Choose the voice and style for your email sequence:",
+        options=list(TONES.keys()),
+        index=0,                     # default: Professional
+        horizontal=True,
+        key="email_tone",
+        help=(
+            "Professional — polished and formal  |  "
+            "Casual & Friendly — warm and conversational  |  "
+            "Direct & No-Nonsense — terse, value-first"
+        ),
+    )
+
+# Show a one-liner preview of what each tone means
+st.caption(f"*{email_tone}:* {TONES[email_tone]}")
+
+st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
 
 # ── Analyse button ────────────────────────────────────────────────────────────
 # Requires: product description, company URL, and a contact name.
@@ -621,6 +658,7 @@ if run_btn and can_run:
     st.session_state["_company_url"]  = company_url
     st.session_state["_contact_name"] = contact_name
     st.session_state["_contact_role"] = contact_role
+    st.session_state["_tone"]         = email_tone   # persist chosen tone
 
     # ── Step 1: ICP analysis ──────────────────────────────────────────────────
     with st.spinner("Analyzing company-ICP fit…"):
@@ -648,6 +686,7 @@ if run_btn and can_run:
             emails = run_sequence_generation(
                 client, product_desc, icp_string, company_url,
                 contact_name, contact_role, angle,
+                tone=email_tone,          # pass chosen tone to Claude
             )
             st.session_state["emails"] = emails
         except Exception as e:
@@ -676,6 +715,7 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
     _company_url  = st.session_state.get("_company_url",  company_url)
     _contact_name = st.session_state.get("_contact_name", contact_name)
     _contact_role = st.session_state.get("_contact_role", contact_role)
+    _tone         = st.session_state.get("_tone",         "Professional")
 
     score     = analysis.get("score", 0)
     css_class = score_class(score)
@@ -752,7 +792,13 @@ if st.session_state.get("analysis") and st.session_state.get("emails"):
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
     # ── Email Sequence ────────────────────────────────────────────────────────
-    st.markdown("## 📧 Personalised 4-Email Sequence")
+    st.markdown(
+        f"## 📧 Personalised 4-Email Sequence &nbsp;"
+        f'<span style="font-size:.7rem;font-weight:700;letter-spacing:.08em;'
+        f'text-transform:uppercase;background:#eef2ff;color:#4338ca;'
+        f'border-radius:20px;padding:3px 12px;">✍️ {_tone}</span>',
+        unsafe_allow_html=True,
+    )
 
     border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
 
