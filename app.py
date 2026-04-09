@@ -900,6 +900,13 @@ with tab3:
             st.text_input("Subject", value=email.get("subject", ""), key=f"subject_{i}")
             st.text_area("Body", value=email.get("body", ""), key=f"body_{i}", height=190)
 
+            # Copy-ready expander — shows a single formatted code block the
+            # user can copy verbatim into their email client or outreach tool.
+            with st.expander("📋 Copy-ready text"):
+                subj = st.session_state.get(f"subject_{i}", email.get("subject", ""))
+                body = st.session_state.get(f"body_{i}",    email.get("body", ""))
+                st.code(f"Subject: {subj}\n\n{body}", language=None)
+
             st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("")  # spacer
 
