@@ -555,167 +555,432 @@ st.markdown("""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# INPUT FORM
-# Left column: product description + structured ICP dropdowns
-# Right column: company URL + LinkedIn / contact enrichment
+# TABBED LAYOUT
+# Tab 1 ⚙️ Setup   — ICP form, tone selector, analyze button
+# Tab 2 📊 Analysis — ICP score card + seniority advisor
+# Tab 3 📧 Emails   — review & approve editable email cards
+# Tab 4 📤 Export   — CSV download + HubSpot CRM sync
+#
+# All four tabs render on every rerun (Streamlit tabs don't restrict execution).
+# Variables defined inside `with tab1:` (run_btn, can_run, etc.) are accessible
+# at module level after the block — Python with-statements don't create a scope.
 # ═════════════════════════════════════════════════════════════════════════════
 
-col_a, col_b = st.columns([1, 1], gap="large")
+tab1, tab2, tab3, tab4 = st.tabs(["⚙️  Setup", "📊  Analysis", "📧  Emails", "📤  Export"])
 
-# ── Left column: product + ICP ────────────────────────────────────────────────
-with col_a:
-    st.markdown('<div class="card-title">Your Product</div>', unsafe_allow_html=True)
-    product_desc = st.text_area(
-        "Product Description",
-        height=110,
-        placeholder="E.g. Acme is a revenue intelligence platform that helps B2B sales teams identify buying signals, prioritise outreach, and increase win rates by 30%.",
-        help="Describe your product's core value proposition.",
-    )
 
-    # ICP section — structured dropdowns replace the old free-text field
-    st.markdown('<div class="icp-header">🎯 ICP Criteria</div>', unsafe_allow_html=True)
+# ── Tab 1: Setup ──────────────────────────────────────────────────────────────
+with tab1:
+    col_a, col_b = st.columns([1, 1], gap="large")
 
-    icp_size    = st.selectbox("Company Size", [""] + COMPANY_SIZES,
-                               format_func=lambda x: "Any size" if x == "" else x,
-                               help="Number of employees at the target company.")
+    # Left column: product description + ICP dropdowns
+    with col_a:
+        st.markdown('<div class="card-title">Your Product</div>', unsafe_allow_html=True)
+        product_desc = st.text_area(
+            "Product Description",
+            height=110,
+            placeholder="E.g. Acme is a revenue intelligence platform that helps B2B sales teams identify buying signals, prioritise outreach, and increase win rates by 30%.",
+            help="Describe your product's core value proposition.",
+        )
 
-    icp_industries = st.multiselect("Industry", INDUSTRIES,
-                                    help="Select one or more industries that match your ICP.")
+        # ICP section — structured dropdowns replace the old free-text field
+        st.markdown('<div class="icp-header">🎯 ICP Criteria</div>', unsafe_allow_html=True)
 
-    icp_location   = st.selectbox("Location", [""] + LOCATIONS,
-                                   format_func=lambda x: "Any location" if x == "" else x)
-
-    icp_funding    = st.selectbox("Funding Stage", [""] + FUNDING_STAGES,
+        icp_size = st.selectbox("Company Size", [""] + COMPANY_SIZES,
+                                format_func=lambda x: "Any size" if x == "" else x,
+                                help="Number of employees at the target company.")
+        icp_industries = st.multiselect("Industry", INDUSTRIES,
+                                        help="Select one or more industries that match your ICP.")
+        icp_location = st.selectbox("Location", [""] + LOCATIONS,
+                                    format_func=lambda x: "Any location" if x == "" else x)
+        icp_funding = st.selectbox("Funding Stage", [""] + FUNDING_STAGES,
                                    format_func=lambda x: "Any stage" if x == "" else x)
+        icp_tech = st.multiselect("Tech Stack", TECH_STACK,
+                                  help="Tools the ideal customer already uses.")
+        icp_pain = st.multiselect("Pain Points", PAIN_POINTS,
+                                  help="Challenges your ICP is actively facing.")
 
-    icp_tech       = st.multiselect("Tech Stack", TECH_STACK,
-                                    help="Tools the ideal customer already uses.")
+    # Right column: target company + contact
+    with col_b:
+        st.markdown('<div class="card-title">Target</div>', unsafe_allow_html=True)
 
-    icp_pain       = st.multiselect("Pain Points", PAIN_POINTS,
-                                    help="Challenges your ICP is actively facing.")
+        company_url = st.text_input(
+            "Target Company URL",
+            placeholder="https://www.acme.com",
+            help="Claude infers company context from the domain.",
+        )
 
+        st.markdown("")
 
-# ── Right column: target company + contact ────────────────────────────────────
-with col_b:
-    st.markdown('<div class="card-title">Target</div>', unsafe_allow_html=True)
+        # LinkedIn enrichment: accepts plain name or LinkedIn profile URL.
+        # Pull button parses the handle; full enrichment via Apollo/Clay in V3.
+        li_input = st.text_input(
+            "Contact Name or LinkedIn URL",
+            placeholder="Sarah Chen  or  https://linkedin.com/in/sarahchen",
+            help="Enter a name for manual input, or a LinkedIn URL to auto-extract details.",
+            key="li_input_field",
+        )
 
-    company_url = st.text_input(
-        "Target Company URL",
-        placeholder="https://www.acme.com",
-        help="Claude infers company context from the domain.",
+        if li_input and is_linkedin_url(li_input):
+            pull_col, _ = st.columns([1, 2])
+            with pull_col:
+                pull_btn = st.button("🔗 Pull from LinkedIn", use_container_width=True,
+                                     key="linkedin_pull_btn")
+            if pull_btn:
+                st.session_state["linkedin_data"] = extract_from_linkedin_url(li_input)
+
+            if st.session_state.get("linkedin_data"):
+                ld     = st.session_state["linkedin_data"]
+                colour = "#166534" if ld["success"] else "#991b1b"
+                bg     = "#f0fdf4"  if ld["success"] else "#fff1f2"
+                border = "#bbf7d0"  if ld["success"] else "#fecaca"
+                st.markdown(
+                    f'<div class="linkedin-success" style="background:{bg};border-color:{border};color:{colour};">'
+                    f'{ld["message"]}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            if st.session_state.get("linkedin_data") and not is_linkedin_url(li_input):
+                st.session_state.pop("linkedin_data", None)
+
+        ld           = st.session_state.get("linkedin_data", {})
+        contact_name = ld.get("name", "") if (ld.get("success") and is_linkedin_url(li_input)) else li_input
+
+        contact_role = st.text_input(
+            "Contact Role / Title",
+            placeholder="VP of Revenue Operations",
+            help="Enter manually. Auto-fill coming in V3 with Apollo/Clay enrichment.",
+        )
+
+    # ── Assemble ICP string from dropdowns ────────────────────────────────────
+    icp_string = build_icp_string(
+        icp_size, icp_industries, icp_location,
+        icp_funding, icp_tech, icp_pain,
     )
 
-    st.markdown("")
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── LinkedIn enrichment input ─────────────────────────────────────────────
-    # Accepts either a plain name OR a LinkedIn profile URL.
-    # When a URL is entered, "Pull from LinkedIn" parses the handle into a name
-    # (full enrichment via Apollo/Clay arrives in V3).
+    # ── Email tone selector ───────────────────────────────────────────────────
+    st.markdown("### ✍️ Email Tone")
+    tone_col, _ = st.columns([2, 1])
+    with tone_col:
+        email_tone = st.radio(
+            "Choose the voice and style for your email sequence:",
+            options=list(TONES.keys()),
+            index=0,
+            horizontal=True,
+            key="email_tone",
+            help=(
+                "Professional — polished and formal  |  "
+                "Casual & Friendly — warm and conversational  |  "
+                "Direct & No-Nonsense — terse, value-first"
+            ),
+        )
+    st.caption(f"*{email_tone}:* {TONES[email_tone]}")
 
-    li_input = st.text_input(
-        "Contact Name or LinkedIn URL",
-        placeholder="Sarah Chen  or  https://linkedin.com/in/sarahchen",
-        help="Enter a name for manual input, or a LinkedIn URL to auto-extract details.",
-        key="li_input_field",
-    )
+    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # Show the Pull button only when the input looks like a LinkedIn URL
-    if li_input and is_linkedin_url(li_input):
-        pull_col, _ = st.columns([1, 2])
-        with pull_col:
-            pull_btn = st.button("🔗 Pull from LinkedIn", use_container_width=True,
-                                  key="linkedin_pull_btn")
-        if pull_btn:
-            result = extract_from_linkedin_url(li_input)
-            st.session_state["linkedin_data"] = result
+    # ── Analyze button ────────────────────────────────────────────────────────
+    # Requires product, company URL, and contact name. ICP + role are optional.
+    can_run = all([product_desc.strip(), company_url.strip(), contact_name.strip()])
 
-        # Show enrichment status if data has been pulled
-        if st.session_state.get("linkedin_data"):
-            ld = st.session_state["linkedin_data"]
-            icon = "✓" if ld["success"] else "✗"
-            colour = "#166534" if ld["success"] else "#991b1b"
-            bg     = "#f0fdf4"  if ld["success"] else "#fff1f2"
-            border = "#bbf7d0"  if ld["success"] else "#fecaca"
+    run_col, _ = st.columns([1, 3])
+    with run_col:
+        run_btn = st.button(
+            "⚡ Analyze & Generate",
+            type="primary",
+            disabled=not can_run,
+            use_container_width=True,
+        )
+
+    if not can_run:
+        missing = []
+        if not product_desc.strip(): missing.append("Product Description")
+        if not company_url.strip():  missing.append("Company URL")
+        if not contact_name.strip(): missing.append("Contact Name (or LinkedIn URL)")
+        if missing:
+            st.info(f"Complete to enable analysis: {' · '.join(missing)}", icon="ℹ️")
+
+    # ── Post-analysis indicator ───────────────────────────────────────────────
+    # Shown after results are ready; prompts the user to switch tabs.
+    if st.session_state.get("analysis") and st.session_state.get("emails"):
+        _score   = st.session_state["analysis"].get("score", 0)
+        _verdict = st.session_state["analysis"].get("verdict", "")
+        st.success(
+            f"✅ Analysis complete — ICP score **{_score}/10** ({_verdict}). "
+            "Switch to **📊 Analysis**, **📧 Emails**, or **📤 Export** to view results.",
+            icon="🎯",
+        )
+
+
+# ── Tab 2: Analysis ───────────────────────────────────────────────────────────
+with tab2:
+    if not st.session_state.get("analysis"):
+        st.info(
+            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
+            "to see your ICP fit analysis here.",
+            icon="📊",
+        )
+    else:
+        analysis  = st.session_state["analysis"]
+        seniority = st.session_state.get("seniority", {})
+
+        score     = analysis.get("score", 0)
+        css_class = score_class(score)
+        angle     = analysis.get("recommended_angle", "")
+
+        st.markdown("## 📊 ICP Fit Analysis")
+
+        c1, c2 = st.columns([1, 2], gap="large")
+
+        with c1:
+            st.markdown(f"""
+<div class="card" style="text-align:center;">
+  <div class="card-title">ICP Fit Score</div>
+  <div class="score-badge {css_class}">{score}</div>
+  <div style="font-size:.75rem;color:#6b7280;margin-bottom:6px;">out of 10</div>
+  <div style="font-size:1rem;font-weight:700;color:#1a1f36;">{analysis.get('verdict','—')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+        with c2:
+            strengths_html = "".join(
+                f'<span class="chip">✓ {s}</span>' for s in analysis.get("strengths", [])
+            )
+            gaps_html = "".join(
+                f'<span class="chip" style="background:#fff1f2;color:#be123c;">✗ {g}</span>'
+                for g in analysis.get("gaps", [])
+            )
+            st.markdown(f"""
+<div class="card">
+  <div class="card-title">Assessment</div>
+  <p style="color:#374151;margin-bottom:14px;">{analysis.get('summary','')}</p>
+  <div class="card-title">Strengths</div>
+  <div style="margin-bottom:12px;">{strengths_html}</div>
+  <div class="card-title">Gaps</div>
+  <div>{gaps_html}</div>
+</div>
+""", unsafe_allow_html=True)
+
+        st.markdown(f"""
+<div class="card" style="background:#f0f4ff;border-color:#c7d2fe;">
+  <div class="card-title" style="color:#4338ca;">🎯 Recommended Outreach Angle</div>
+  <p style="color:#1e1b4b;font-size:.95rem;margin:0;">{angle}</p>
+</div>
+""", unsafe_allow_html=True)
+
+        # Contact seniority advisor card
+        if seniority:
+            primary   = seniority.get("primary_level", "")
+            secondary = seniority.get("secondary_level") or ""
+            reasoning = seniority.get("reasoning", "")
+
+            primary_colour   = SENIORITY_COLOURS.get(primary,   "#6366f1")
+            secondary_colour = SENIORITY_COLOURS.get(secondary, "#8b5cf6")
+
+            primary_badge = (
+                f'<span class="seniority-level" style="color:{primary_colour};border-color:{primary_colour};">'
+                f'⭐ {primary}</span>'
+            ) if primary else ""
+
+            secondary_badge = (
+                f'<span class="seniority-level" style="color:{secondary_colour};border-color:{secondary_colour};">'
+                f'{secondary}</span>'
+            ) if secondary and secondary != "null" else ""
+
+            st.markdown(f"""
+<div class="seniority-card">
+  <div class="card-title" style="color:#7c3aed;">💼 Recommended Contact Seniority</div>
+  <div style="margin-bottom:12px;">{primary_badge}{secondary_badge}</div>
+  <p style="color:#374151;font-size:.875rem;margin:0;">{reasoning}</p>
+</div>
+""", unsafe_allow_html=True)
+
+
+# ── Tab 3: Emails ─────────────────────────────────────────────────────────────
+with tab3:
+    if not st.session_state.get("emails"):
+        st.info(
+            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
+            "to generate your personalised email sequence here.",
+            icon="📧",
+        )
+    else:
+        emails = st.session_state["emails"]
+        _tone  = st.session_state.get("_tone", "Professional")
+
+        approved_count = sum(
+            1 for i in range(len(emails))
+            if st.session_state.get(f"approve_{i}", True)
+        )
+
+        st.markdown(
+            f"## 📧 Review & Approve Email Sequence &nbsp;"
+            f'<span style="font-size:.7rem;font-weight:700;letter-spacing:.08em;'
+            f'text-transform:uppercase;background:#eef2ff;color:#4338ca;'
+            f'border-radius:20px;padding:3px 12px;">✍️ {_tone}</span>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            f"**{approved_count} of {len(emails)} emails approved** for export/sync. "
+            "Edit subjects/bodies inline, then uncheck any you want to exclude."
+        )
+
+        border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
+
+        for i, email in enumerate(emails):
+            color     = border_colors[i % len(border_colors)]
+            send_date = (datetime.today() + timedelta(days=email.get("send_day", 1) - 1)).strftime("%b %d, %Y")
+
+            is_approved  = st.session_state.get(f"approve_{i}", True)
+            card_opacity = "1" if is_approved else "0.45"
+            card_border  = color if is_approved else "#d1d5db"
+
             st.markdown(
-                f'<div class="linkedin-success" style="background:{bg};border-color:{border};color:{colour};">'
-                f'{ld["message"]}</div>',
+                f'<div style="border:1px solid {card_border};border-left:4px solid {card_border};'
+                f'border-radius:10px;padding:18px 22px;margin-bottom:6px;'
+                f'background:#fff;opacity:{card_opacity};transition:opacity .2s;">',
                 unsafe_allow_html=True,
             )
+
+            hdr_col, chk_col = st.columns([6, 1])
+            with hdr_col:
+                st.markdown(
+                    f'<div class="email-seq">Email {email.get("sequence","")}</div>'
+                    f'<div class="email-timing">⏱ {email.get("send_label","")} &nbsp;·&nbsp; Suggested send: {send_date}</div>',
+                    unsafe_allow_html=True,
+                )
+            with chk_col:
+                st.checkbox("Include", value=True, key=f"approve_{i}")
+
+            st.text_input("Subject", value=email.get("subject", ""), key=f"subject_{i}")
+            st.text_area("Body", value=email.get("body", ""), key=f"body_{i}", height=190)
+
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("")  # spacer
+
+
+# ── Tab 4: Export ─────────────────────────────────────────────────────────────
+with tab4:
+    if not st.session_state.get("emails"):
+        st.info(
+            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
+            "to unlock CSV export and HubSpot sync.",
+            icon="📤",
+        )
     else:
-        # Clear stale LinkedIn data if the user switched back to a plain name
-        if st.session_state.get("linkedin_data") and not is_linkedin_url(li_input):
-            st.session_state.pop("linkedin_data", None)
+        emails        = st.session_state["emails"]
+        _tone         = st.session_state.get("_tone",         "Professional")
+        _contact_name = st.session_state.get("_contact_name", "")
+        _contact_role = st.session_state.get("_contact_role", "")
+        _company_url  = st.session_state.get("_company_url",  "")
 
-    # Resolve final contact name:
-    # - LinkedIn pull succeeded → use extracted name
-    # - Otherwise → use whatever the user typed directly
-    ld             = st.session_state.get("linkedin_data", {})
-    contact_name   = ld.get("name", "") if (ld.get("success") and is_linkedin_url(li_input)) else li_input
+        # ── CSV download ──────────────────────────────────────────────────────
+        # build_csv() reads current widget states (from tab3) so edits and
+        # approval decisions are reflected in the exported file.
+        st.markdown("## 📥 Export Sequence")
 
-    # Contact role is always shown — LinkedIn URL alone can't reliably provide it
-    contact_role = st.text_input(
-        "Contact Role / Title",
-        placeholder="VP of Revenue Operations",
-        help="Enter manually. Auto-fill coming in V3 with Apollo/Clay enrichment.",
-    )
+        csv_data     = build_csv(emails, _tone, _contact_name, _company_url)
+        csv_filename = (
+            f"outreach_{_contact_name.replace(' ', '_')}_"
+            f"{datetime.today().strftime('%Y%m%d')}.csv"
+        )
 
+        dl_col, _ = st.columns([1, 3])
+        with dl_col:
+            st.download_button(
+                label="⬇️ Download as CSV",
+                data=csv_data,
+                file_name=csv_filename,
+                mime="text/csv",
+                use_container_width=True,
+                help="Downloads all 4 emails with subject, body, send timing, tone, and approval status.",
+            )
+        st.caption(
+            f"Includes all {len(emails)} emails with current edits and approval status. "
+            "Import into Google Sheets, Excel, or your outreach tool."
+        )
 
-# ── Assemble ICP string from dropdowns ───────────────────────────────────────
-# Done here (before can_run) so validation can check whether any ICP was set.
-icp_string = build_icp_string(
-    icp_size, icp_industries, icp_location,
-    icp_funding, icp_tech, icp_pain,
-)
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+        # ── HubSpot sync ──────────────────────────────────────────────────────
+        # Assembles only approved + edited emails from tab3 widget states.
+        st.markdown("## 🔶 HubSpot Integration *(optional)*")
 
-# ── Email tone selector ───────────────────────────────────────────────────────
-# Radio buttons let the user control vocabulary and formality before generation.
-# The selected label maps to a detailed description injected into the Claude prompt.
-st.markdown("### ✍️ Email Tone")
-tone_col, _ = st.columns([2, 1])
-with tone_col:
-    email_tone = st.radio(
-        "Choose the voice and style for your email sequence:",
-        options=list(TONES.keys()),
-        index=0,                     # default: Professional
-        horizontal=True,
-        key="email_tone",
-        help=(
-            "Professional — polished and formal  |  "
-            "Casual & Friendly — warm and conversational  |  "
-            "Direct & No-Nonsense — terse, value-first"
-        ),
-    )
+        approved_emails = [
+            {
+                **emails[i],
+                "subject": st.session_state.get(f"subject_{i}", emails[i]["subject"]),
+                "body":    st.session_state.get(f"body_{i}",    emails[i]["body"]),
+            }
+            for i in range(len(emails))
+            if st.session_state.get(f"approve_{i}", True)
+        ]
+        n_approved = len(approved_emails)
 
-# Show a one-liner preview of what each tone means
-st.caption(f"*{email_tone}:* {TONES[email_tone]}")
+        st.markdown(f"""
+<div class="hs-banner">
+  <div style="font-size:2rem;">🔶</div>
+  <div>
+    <h3>Sync to HubSpot</h3>
+    <p>Creates a contact for <strong>{_contact_name}</strong> at <strong>{_company_url}</strong>
+       and logs <strong>{n_approved} approved email{'s' if n_approved != 1 else ''}</strong> as Notes + Tasks.</p>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+        st.markdown("""
+<div class="card" style="background:#fff7f0;border-color:#fde8d8;margin-bottom:16px;">
+  <div class="card-title" style="color:#c2500a;">🔑 Where to find your token</div>
+  <p style="color:#374151;font-size:.875rem;margin:0;">
+    <strong>Settings → Integrations → Private Apps</strong>.
+    Needs <code>crm.objects.contacts.write</code>, <code>crm.objects.notes.write</code>
+    and <code>crm.objects.tasks.write</code> scopes.<br><br>
+    <a href="https://knowledge.hubspot.com/integrations/how-do-i-get-my-hubspot-api-key"
+       target="_blank" style="color:#c2500a;">📖 HubSpot API key documentation →</a>
+  </p>
+</div>
+""", unsafe_allow_html=True)
 
+        hs_token = st.text_input(
+            "HubSpot Personal Access Token",
+            type="password",
+            placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+            help="Never stored server-side.",
+            key="hs_token",
+        )
 
-# ── Analyse button ────────────────────────────────────────────────────────────
-# Requires: product description, company URL, and a contact name.
-# ICP dropdowns are optional (default = "Any"); role is optional too.
+        if hs_token:
+            if n_approved == 0:
+                st.warning(
+                    "No emails are approved — tick at least one checkbox in the **📧 Emails** tab.",
+                    icon="⚠️",
+                )
+            else:
+                hs_col, _ = st.columns([1, 3])
+                with hs_col:
+                    hs_btn = st.button(
+                        f"🔶 Push {n_approved} Email{'s' if n_approved != 1 else ''} to HubSpot",
+                        type="secondary",
+                        use_container_width=True,
+                        key="hs_push_btn",
+                    )
+                if hs_btn:
+                    st.session_state.pop("hs_sync_log", None)
+                    with st.spinner("Syncing with HubSpot…"):
+                        sync_log = push_to_hubspot(
+                            hs_token, _contact_name, _contact_role,
+                            _company_url, approved_emails,
+                        )
+                    st.session_state["hs_sync_log"] = sync_log
+        else:
+            st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
 
-can_run = all([product_desc.strip(), company_url.strip(), contact_name.strip()])
-
-run_col, _ = st.columns([1, 3])
-with run_col:
-    run_btn = st.button(
-        "⚡ Analyze & Generate",
-        type="primary",
-        disabled=not can_run,
-        use_container_width=True,
-    )
-
-if not can_run and not run_btn:
-    missing = []
-    if not product_desc.strip(): missing.append("Product Description")
-    if not company_url.strip():  missing.append("Company URL")
-    if not contact_name.strip(): missing.append("Contact Name (or LinkedIn URL)")
-    if missing:
-        st.info(f"Complete to enable analysis: {' · '.join(missing)}", icon="ℹ️")
+        # Sync log persisted in session_state — survives re-renders
+        if st.session_state.get("hs_sync_log"):
+            st.markdown("**Sync results:**")
+            for icon, msg in st.session_state["hs_sync_log"]:
+                (st.success if icon == "✅" else st.error)(f"{icon} {msg}")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -782,280 +1047,3 @@ elif run_btn and not can_run:
     st.error("Please complete the required fields before running the analysis.")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# BLOCK 2 — Render results on every re-run whenever session_state has data
-# This block is independent of run_btn, so it persists across widget interactions
-# (typing the HubSpot token, clicking Push, etc.).
-# ═════════════════════════════════════════════════════════════════════════════
-
-if st.session_state.get("analysis") and st.session_state.get("emails"):
-
-    analysis  = st.session_state["analysis"]
-    seniority = st.session_state.get("seniority", {})
-    emails    = st.session_state["emails"]
-
-    # Use snapshotted values from analysis time
-    _product      = st.session_state.get("_product",      product_desc)
-    _icp_string   = st.session_state.get("_icp_string",   icp_string)
-    _company_url  = st.session_state.get("_company_url",  company_url)
-    _contact_name = st.session_state.get("_contact_name", contact_name)
-    _contact_role = st.session_state.get("_contact_role", contact_role)
-    _tone         = st.session_state.get("_tone",         "Professional")
-
-    score     = analysis.get("score", 0)
-    css_class = score_class(score)
-    angle     = analysis.get("recommended_angle", "")
-
-    # ── ICP Fit Analysis ──────────────────────────────────────────────────────
-    st.markdown("## ICP Fit Analysis")
-
-    c1, c2 = st.columns([1, 2], gap="large")
-
-    with c1:
-        st.markdown(f"""
-<div class="card" style="text-align:center;">
-  <div class="card-title">ICP Fit Score</div>
-  <div class="score-badge {css_class}">{score}</div>
-  <div style="font-size:.75rem;color:#6b7280;margin-bottom:6px;">out of 10</div>
-  <div style="font-size:1rem;font-weight:700;color:#1a1f36;">{analysis.get('verdict','—')}</div>
-</div>
-""", unsafe_allow_html=True)
-
-    with c2:
-        strengths_html = "".join(
-            f'<span class="chip">✓ {s}</span>' for s in analysis.get("strengths", [])
-        )
-        gaps_html = "".join(
-            f'<span class="chip" style="background:#fff1f2;color:#be123c;">✗ {g}</span>'
-            for g in analysis.get("gaps", [])
-        )
-        st.markdown(f"""
-<div class="card">
-  <div class="card-title">Assessment</div>
-  <p style="color:#374151;margin-bottom:14px;">{analysis.get('summary','')}</p>
-  <div class="card-title">Strengths</div>
-  <div style="margin-bottom:12px;">{strengths_html}</div>
-  <div class="card-title">Gaps</div>
-  <div>{gaps_html}</div>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown(f"""
-<div class="card" style="background:#f0f4ff;border-color:#c7d2fe;">
-  <div class="card-title" style="color:#4338ca;">🎯 Recommended Outreach Angle</div>
-  <p style="color:#1e1b4b;font-size:.95rem;margin:0;">{angle}</p>
-</div>
-""", unsafe_allow_html=True)
-
-    # ── Contact Seniority Advisor ─────────────────────────────────────────────
-    if seniority:
-        primary   = seniority.get("primary_level", "")
-        secondary = seniority.get("secondary_level") or ""
-        reasoning = seniority.get("reasoning", "")
-
-        primary_colour   = SENIORITY_COLOURS.get(primary,   "#6366f1")
-        secondary_colour = SENIORITY_COLOURS.get(secondary, "#8b5cf6")
-
-        primary_badge = (
-            f'<span class="seniority-level" style="color:{primary_colour};border-color:{primary_colour};">'
-            f'⭐ {primary}</span>'
-        ) if primary else ""
-
-        secondary_badge = (
-            f'<span class="seniority-level" style="color:{secondary_colour};border-color:{secondary_colour};">'
-            f'{secondary}</span>'
-        ) if secondary and secondary != "null" else ""
-
-        st.markdown(f"""
-<div class="seniority-card">
-  <div class="card-title" style="color:#7c3aed;">💼 Recommended Contact Seniority</div>
-  <div style="margin-bottom:12px;">{primary_badge}{secondary_badge}</div>
-  <p style="color:#374151;font-size:.875rem;margin:0;">{reasoning}</p>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # ── Email Sequence — Review & Approve ────────────────────────────────────
-    # Each email is shown as an editable card with a checkbox.
-    # Users can tweak subject/body inline and deselect emails before HubSpot sync.
-    # Widget keys (approve_N, subject_N, body_N) are cleared at the start of
-    # Block 1 so every new analysis resets to fresh defaults.
-
-    st.markdown(
-        f"## 📧 Review & Approve Email Sequence &nbsp;"
-        f'<span style="font-size:.7rem;font-weight:700;letter-spacing:.08em;'
-        f'text-transform:uppercase;background:#eef2ff;color:#4338ca;'
-        f'border-radius:20px;padding:3px 12px;">✍️ {_tone}</span>',
-        unsafe_allow_html=True,
-    )
-
-    # Approval summary — count how many are currently checked
-    approved_count = sum(
-        1 for i in range(len(emails))
-        if st.session_state.get(f"approve_{i}", True)
-    )
-    st.caption(
-        f"**{approved_count} of {len(emails)} emails approved** for HubSpot sync. "
-        "Edit subjects/bodies inline, then uncheck any you want to exclude."
-    )
-
-    border_colors = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981"]
-
-    for i, email in enumerate(emails):
-        color     = border_colors[i % len(border_colors)]
-        send_date = (datetime.today() + timedelta(days=email.get("send_day", 1) - 1)).strftime("%b %d, %Y")
-
-        # Read current approval state (defaults True on first render)
-        is_approved = st.session_state.get(f"approve_{i}", True)
-        card_opacity = "1" if is_approved else "0.45"
-        card_border  = color if is_approved else "#d1d5db"
-
-        # Card wrapper — opacity signals excluded state visually
-        st.markdown(
-            f'<div style="border:1px solid {card_border};border-left:4px solid {card_border};'
-            f'border-radius:10px;padding:18px 22px;margin-bottom:6px;'
-            f'background:#fff;opacity:{card_opacity};transition:opacity .2s;">',
-            unsafe_allow_html=True,
-        )
-
-        hdr_col, chk_col = st.columns([6, 1])
-        with hdr_col:
-            st.markdown(
-                f'<div class="email-seq">Email {email.get("sequence","")}</div>'
-                f'<div class="email-timing">⏱ {email.get("send_label","")} &nbsp;·&nbsp; Suggested send: {send_date}</div>',
-                unsafe_allow_html=True,
-            )
-        with chk_col:
-            st.checkbox(
-                "Include",
-                value=True,
-                key=f"approve_{i}",
-            )
-
-        # Editable subject — value= sets default; key preserves edits across reruns
-        st.text_input(
-            "Subject",
-            value=email.get("subject", ""),
-            key=f"subject_{i}",
-            label_visibility="visible",
-        )
-        # Editable body
-        st.text_area(
-            "Body",
-            value=email.get("body", ""),
-            key=f"body_{i}",
-            height=190,
-            label_visibility="visible",
-        )
-
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown("")  # spacer between cards
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # ── CSV Export ────────────────────────────────────────────────────────────
-    # build_csv() reads current widget states so the download reflects any
-    # inline edits and includes an "Included: Yes/No" column per email.
-    st.markdown("## 📥 Export Sequence")
-
-    csv_data = build_csv(emails, _tone, _contact_name, _company_url)
-    csv_filename = (
-        f"outreach_{_contact_name.replace(' ', '_')}_"
-        f"{datetime.today().strftime('%Y%m%d')}.csv"
-    )
-
-    dl_col, _ = st.columns([1, 3])
-    with dl_col:
-        st.download_button(
-            label="⬇️ Download as CSV",
-            data=csv_data,
-            file_name=csv_filename,
-            mime="text/csv",
-            use_container_width=True,
-            help="Downloads all 4 emails with subject, body, send timing, tone, and approval status.",
-        )
-    st.caption(
-        f"Includes all {len(emails)} emails with current edits and approval status. "
-        "Import into Google Sheets, Excel, or your outreach tool."
-    )
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # ── HubSpot Sync ──────────────────────────────────────────────────────────
-    # Rendered here (outside run_btn block) so it persists across re-runs.
-    # key="hs_token" preserves the typed token value in Streamlit widget state.
-    # Only approved + edited emails are pushed (assembled from widget states).
-    st.markdown("## 🔶 HubSpot Integration *(optional)*")
-
-    # Assemble the final list of emails to sync: only approved ones, with any
-    # inline edits from the text_input / text_area widgets applied.
-    approved_emails = [
-        {
-            **emails[i],
-            "subject": st.session_state.get(f"subject_{i}", emails[i]["subject"]),
-            "body":    st.session_state.get(f"body_{i}",    emails[i]["body"]),
-        }
-        for i in range(len(emails))
-        if st.session_state.get(f"approve_{i}", True)
-    ]
-    n_approved = len(approved_emails)
-
-    st.markdown(f"""
-<div class="hs-banner">
-  <div style="font-size:2rem;">🔶</div>
-  <div>
-    <h3>Sync to HubSpot</h3>
-    <p>Creates a contact for <strong>{_contact_name}</strong> at <strong>{_company_url}</strong>
-       and logs <strong>{n_approved} approved email{'s' if n_approved != 1 else ''}</strong> as Notes + Tasks.</p>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-    st.markdown("""
-<div class="card" style="background:#fff7f0;border-color:#fde8d8;margin-bottom:16px;">
-  <div class="card-title" style="color:#c2500a;">🔑 Where to find your token</div>
-  <p style="color:#374151;font-size:.875rem;margin:0;">
-    <strong>Settings → Integrations → Private Apps</strong>.
-    Needs <code>crm.objects.contacts.write</code>, <code>crm.objects.notes.write</code>
-    and <code>crm.objects.tasks.write</code> scopes.<br><br>
-    <a href="https://knowledge.hubspot.com/integrations/how-do-i-get-my-hubspot-api-key"
-       target="_blank" style="color:#c2500a;">📖 HubSpot API key documentation →</a>
-  </p>
-</div>
-""", unsafe_allow_html=True)
-
-    hs_token = st.text_input(
-        "HubSpot Personal Access Token",
-        type="password",
-        placeholder="pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-        help="Never stored server-side.",
-        key="hs_token",
-    )
-
-    if hs_token:
-        if n_approved == 0:
-            st.warning("No emails are approved — tick at least one checkbox above before syncing.", icon="⚠️")
-        else:
-            hs_col, _ = st.columns([1, 3])
-            with hs_col:
-                hs_btn = st.button(
-                    f"🔶 Push {n_approved} Email{'s' if n_approved != 1 else ''} to HubSpot",
-                    type="secondary",
-                    use_container_width=True,
-                    key="hs_push_btn",
-                )
-            if hs_btn:
-                st.session_state.pop("hs_sync_log", None)
-                with st.spinner("Syncing with HubSpot…"):
-                    sync_log = push_to_hubspot(hs_token, _contact_name, _contact_role,
-                                               _company_url, approved_emails)
-                st.session_state["hs_sync_log"] = sync_log
-    else:
-        st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
-
-    # Render sync log — persisted in session_state so it survives re-renders
-    if st.session_state.get("hs_sync_log"):
-        st.markdown("**Sync results:**")
-        for icon, msg in st.session_state["hs_sync_log"]:
-            (st.success if icon == "✅" else st.error)(f"{icon} {msg}")
