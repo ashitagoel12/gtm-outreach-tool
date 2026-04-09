@@ -541,6 +541,50 @@ with st.sidebar:
 5. **Sync** *(optional)* — push to HubSpot with your token
 """)
     st.divider()
+
+    # ── Live session stats ────────────────────────────────────────────────────
+    # Shown once an analysis has been run; updates automatically as the user
+    # edits emails or toggles approval checkboxes.
+    if st.session_state.get("analysis") and st.session_state.get("emails"):
+        _a   = st.session_state["analysis"]
+        _e   = st.session_state["emails"]
+        _t   = st.session_state.get("_tone", "Professional")
+        _cn  = st.session_state.get("_contact_name", "—")
+
+        _approved = sum(
+            1 for i in range(len(_e))
+            if st.session_state.get(f"approve_{i}", True)
+        )
+        _score   = _a.get("score", 0)
+        _verdict = _a.get("verdict", "")
+        _cls     = score_class(_score)
+        _colour  = {"score-high": "#22c55e", "score-medium": "#f59e0b", "score-low": "#ef4444"}.get(_cls, "#6b7280")
+
+        st.markdown("### 📈 Session Stats")
+        st.markdown(
+            f'<div style="background:#f8f9fc;border:1px solid #e8ecf0;border-radius:10px;padding:14px 16px;">'
+            f'<div style="font-size:.7rem;font-weight:700;color:#7c8db0;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px;">Current Analysis</div>'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+            f'<span style="font-size:.82rem;color:#374151;">ICP Score</span>'
+            f'<span style="font-weight:700;color:{_colour};">{_score}/10 · {_verdict}</span>'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+            f'<span style="font-size:.82rem;color:#374151;">Tone</span>'
+            f'<span style="font-weight:600;color:#4338ca;">{_t}</span>'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:6px;">'
+            f'<span style="font-size:.82rem;color:#374151;">Emails approved</span>'
+            f'<span style="font-weight:700;color:#1a1f36;">{_approved} / {len(_e)}</span>'
+            f'</div>'
+            f'<div style="display:flex;justify-content:space-between;">'
+            f'<span style="font-size:.82rem;color:#374151;">Contact</span>'
+            f'<span style="font-weight:600;color:#1a1f36;font-size:.82rem;">{_cn}</span>'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.divider()
+
     st.caption("GTM Outreach Intelligence · V2")
 
 
