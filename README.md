@@ -25,6 +25,7 @@ Sales and GTM teams waste time writing cold emails to companies that aren't even
 | 🎯 **Structured ICP Dropdowns** | Six dropdowns: company size, industry, location, funding stage, tech stack, pain points |
 | 🧠 **ICP Fit Scoring** | Claude scores company fit 1–10 with verdict, strengths, gaps, and outreach angle |
 | 💼 **Seniority Advisor** | Claude recommends primary + secondary seniority levels with reasoning — shown *before* you pick a contact |
+| 🔍 **Apollo Contact Search** | Enter your Apollo API key to auto-find contacts at the target company by seniority level |
 | 📋 **LinkedIn Profile Parser** | Paste the full LinkedIn page text → Claude extracts name, title, and a personalization hook for Email 1 |
 | ✍️ **Email Tone Selector** | Three tones: Professional / Casual & Friendly / Direct & No-Nonsense |
 | ✉️ **4-Email Sequence** | Day 1 / 4 / 9 / 17 personalized emails with suggested send dates |
@@ -125,12 +126,14 @@ STAGE 1 — Account Qualification (⚙️ Setup tab)
 
 STAGE 2 — Contact Identification (👤 Contact tab)
   │
-  ├─ Manual: contact name + title
-  └─ Optional: paste LinkedIn profile text
+  ├─ Apollo search (optional, API key required) → auto-find by domain + seniority
+  ├─ LinkedIn profile text paste (optional) → Claude parse
+  └─ Manual: contact name + title (always available)
         │
         ▼
-  [Call 3] LinkedIn Profile Parser (if text pasted)
-        └─ name, title, personalization hook
+  [Call 3] LinkedIn Profile Parser (if text pasted, optional)
+        └─ name, title, company_domain, personalization hook
+  [Domain mismatch check — non-blocking warning if contact ≠ target domain]
               │
               ▼ (auto-fill fields; hook stored in session state)
 

@@ -395,7 +395,7 @@ Return ONLY valid JSON (no markdown):
 def run_linkedin_parse(client: anthropic.Anthropic, profile_text: str) -> dict:
     """
     Parse pasted LinkedIn profile text to extract structured contact info.
-    Returns: name, title, company, hook (or None).
+    Returns: name, title, company, company_domain, hook (or None).
     """
     prompt = f"""Extract structured contact information from this LinkedIn profile page text.
 Return ONLY valid JSON:
@@ -403,6 +403,7 @@ Return ONLY valid JSON:
   "name": "<full name>",
   "title": "<current job title>",
   "company": "<current company name>",
+  "company_domain": "<the person's current employer domain, e.g. 'lattice.com' — infer from company name if not explicit, or null if unknown>",
   "hook": "<one specific, concrete detail from their background that could personalize a cold email — e.g. 'recently promoted from Director to VP', 'previously at Salesforce', 'posted about scaling their RevOps team', 'company just raised Series B'. If nothing specific, return null.>"
 }}
 
@@ -481,6 +482,134 @@ Return ONLY valid JSON (no markdown):
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m: return json.loads(m.group(0))
     raise ValueError("No JSON array found in sequence response")
+
+
+# ── Apollo.io contact search ──────────────────────────────────────────────────
+
+def search_apollo_contacts(api_key: str, domain: str, seniority: str) -> dict:
+    """
+    Search Apollo.io for contacts at a target company matching a seniority level.
+
+    Maps our seniority levels (IC, Manager, Director, VP, C-Level) to Apollo's
+    seniority filter values.
+
+    Returns: {"success": bool, "contacts": [...], "error": str}
+    Each contact: {"name", "title", "email", "linkedin_url", "company",
+                   "company_domain", "seniority"}
+    """
+    domain = domain.replace("https://", "").replace("http://", "").split("/")[0].strip()
+
+    seniority_map = {
+        "IC":       ["individual_contributor", "entry"],
+        "Manager":  ["manager"],
+        "Director": ["director"],
+        "VP":       ["vp"],
+        "C-Level":  ["c_suite", "owner", "founder"],
+    }
+    apollo_seniority = seniority_map.get(seniority, ["director", "vp"])
+
+    headers = {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-cache",
+        "X-Api-Key": api_key,
+    }
+    payload = {
+        "q_organization_domains": domain,
+        "page": 1,
+        "per_page": 5,
+        "person_seniorities": apollo_seniority,
+    }
+
+    try:
+        r = requests.post(
+            "https://api.apollo.io/api/v1/mixed_people/search",
+            headers=headers,
+            json=payload,
+            timeout=15,
+        )
+        if r.status_code == 401:
+            return {"success": False, "contacts": [],
+                    "error": "Invalid API key. Check your Apollo credentials."}
+        if r.status_code == 429:
+            return {"success": False, "contacts": [],
+                    "error": "Apollo rate limit reached. Try again in a moment."}
+        if r.status_code != 200:
+            return {"success": False, "contacts": [],
+                    "error": f"Apollo error ({r.status_code}). Try manual entry below."}
+
+        people = r.json().get("people", [])
+        if not people:
+            return {
+                "success": True, "contacts": [],
+                "error": (
+                    f"No contacts found at {domain} matching '{seniority}' seniority. "
+                    "Try manual entry below."
+                ),
+            }
+
+        contacts = []
+        for p in people[:5]:
+            org = (p.get("organization") or {})
+            contacts.append({
+                "name":           p.get("name", "Unknown"),
+                "title":          p.get("title", ""),
+                "email":          p.get("email") or "",
+                "linkedin_url":   p.get("linkedin_url", ""),
+                "company":        org.get("name", domain),
+                "company_domain": org.get("primary_domain", domain),
+                "seniority":      p.get("seniority", ""),
+            })
+        return {"success": True, "contacts": contacts, "error": ""}
+
+    except requests.exceptions.Timeout:
+        return {"success": False, "contacts": [],
+                "error": "Apollo request timed out. Try manual entry below."}
+    except Exception as e:
+        return {"success": False, "contacts": [], "error": f"Search failed: {str(e)}"}
+
+
+# ── Domain mismatch detection ─────────────────────────────────────────────────
+
+def detect_domain_mismatch(
+    target_url: str,
+    contact_company_domain: str,
+    contact_name: str,
+    contact_title: str,
+) -> dict:
+    """
+    Compare the target company domain against the contact's known company domain.
+
+    Returns: {"mismatch": bool, "target_domain": str,
+              "contact_domain": str, "message": str}
+    """
+    def _clean(url: str) -> str:
+        return (
+            url.replace("https://", "").replace("http://", "")
+               .replace("www.", "").split("/")[0].strip().lower()
+        )
+
+    target_domain  = _clean(target_url)
+    contact_domain = _clean(contact_company_domain) if contact_company_domain else ""
+
+    if not contact_domain or not target_domain:
+        return {"mismatch": False, "target_domain": target_domain,
+                "contact_domain": contact_domain, "message": ""}
+
+    if target_domain in contact_domain or contact_domain in target_domain:
+        return {"mismatch": False, "target_domain": target_domain,
+                "contact_domain": contact_domain, "message": ""}
+
+    return {
+        "mismatch": True,
+        "target_domain": target_domain,
+        "contact_domain": contact_domain,
+        "message": (
+            f"**{contact_name or 'This contact'}** appears to work at "
+            f"**{contact_domain}**, but your target company is **{target_domain}**. "
+            f"The emails will be written for {target_domain}. "
+            "Continue only if this is intentional (e.g. targeting their new employer)."
+        ),
+    }
 
 
 # ── HubSpot CRM integration ───────────────────────────────────────────────────
@@ -975,41 +1104,128 @@ with tab3:
             icon="🔒",
         )
     else:
-        # Context recap bar
-        _recap_url      = st.session_state.get("_company_url", "—")
-        _recap_score    = st.session_state.get("analysis", {}).get("score", "—")
-        _recap_seniority = st.session_state.get("seniority", {}).get("primary_level", "—")
-        st.markdown(
-            f'<div class="context-recap">'
-            f'Qualifying: {_recap_url} &nbsp;|&nbsp; '
-            f'ICP Score: {_recap_score}/10 &nbsp;|&nbsp; '
-            f'Target: {_recap_seniority}'
-            f'</div>',
-            unsafe_allow_html=True,
+        # ── Context recap bar (polished status strip) ─────────────────────────
+        _t3_score    = st.session_state.get("analysis", {}).get("score", "—")
+        _t3_verdict  = st.session_state.get("analysis", {}).get("verdict", "")
+        _t3_senior   = st.session_state.get("seniority", {}).get("primary_level", "—")
+        _t3_url      = st.session_state.get("_company_url", "—")
+        _t3_domain   = _t3_url.replace("https://", "").replace("http://", "").split("/")[0]
+        _score_color = {"Strong Fit": "#22c55e", "Moderate Fit": "#f59e0b",
+                        "Weak Fit": "#ef4444"}.get(_t3_verdict, "#6b7280")
+
+        st.markdown(f"""
+<div style="background:#f8f9fc;border:1px solid #e8ecf0;border-radius:10px;
+            padding:14px 20px;margin-bottom:24px;
+            display:flex;gap:32px;align-items:center;flex-wrap:wrap;">
+    <div>
+        <div style="font-size:.65rem;font-weight:700;color:#9ca3af;
+                    text-transform:uppercase;letter-spacing:.08em;">Target</div>
+        <div style="font-size:.9rem;font-weight:600;color:#1a1f36;">{_t3_domain}</div>
+    </div>
+    <div>
+        <div style="font-size:.65rem;font-weight:700;color:#9ca3af;
+                    text-transform:uppercase;letter-spacing:.08em;">ICP Score</div>
+        <div style="font-size:.9rem;font-weight:700;color:{_score_color};">
+            {_t3_score}/10 · {_t3_verdict}
+        </div>
+    </div>
+    <div>
+        <div style="font-size:.65rem;font-weight:700;color:#9ca3af;
+                    text-transform:uppercase;letter-spacing:.08em;">Target Seniority</div>
+        <div style="font-size:.9rem;font-weight:600;color:#6366f1;">{_t3_senior}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+        st.markdown("### 👤 Find Your Contact")
+
+        # ── TIER 1: Apollo contact search ──────────────────────────────────────
+        apollo_col, _ = st.columns([2, 1])
+        with apollo_col:
+            apollo_key = st.text_input(
+                "Apollo API Key (optional — enables contact search)",
+                type="password",
+                placeholder="your-apollo-api-key",
+                help=(
+                    "Find yours at app.apollo.io → Settings → Integrations → API. "
+                    "Free plan includes 50 credits/month."
+                ),
+                key="apollo_key_input",
+            )
+        st.caption(
+            "No Apollo account? "
+            "[Get a free API key →](https://app.apollo.io/signup) "
+            "· Or skip to manual entry below."
         )
 
-        st.markdown("## 👤 Add Your Contact")
+        if apollo_key.strip():
+            search_col, _ = st.columns([1, 3])
+            with search_col:
+                apollo_btn = st.button(
+                    "🔍 Find Contacts at This Company",
+                    use_container_width=True,
+                    key="apollo_search_btn",
+                )
 
-        # ── Option A: Manual entry ────────────────────────────────────────────
-        st.markdown("#### Contact Details")
-        m_col1, m_col2 = st.columns(2, gap="medium")
-        with m_col1:
-            contact_name_input = st.text_input(
-                "Contact Name",
-                placeholder="Sarah Chen",
-                key="contact_name_field",
-                value=st.session_state.get("_contact_name", ""),
-            )
-        with m_col2:
-            contact_role_input = st.text_input(
-                "Contact Title / Role",
-                placeholder="VP of Revenue Operations",
-                key="contact_role_field",
-                value=st.session_state.get("_contact_role", ""),
-            )
+            if apollo_btn:
+                with st.spinner("Searching Apollo for contacts…"):
+                    st.session_state["apollo_results"] = search_apollo_contacts(
+                        api_key=apollo_key,
+                        domain=st.session_state.get("_company_url", ""),
+                        seniority=st.session_state.get("seniority", {}).get("primary_level", ""),
+                    )
 
-        # ── Option B: LinkedIn text paste ─────────────────────────────────────
-        with st.expander("📋 Paste LinkedIn Profile (optional enrichment)"):
+            apollo_data = st.session_state.get("apollo_results")
+            if apollo_data:
+                if not apollo_data["success"] or not apollo_data["contacts"]:
+                    st.warning(apollo_data.get("error", "No contacts found."), icon="⚠️")
+                else:
+                    contacts = apollo_data["contacts"]
+                    st.markdown(f"""
+<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
+            padding:12px 16px;margin-bottom:16px;">
+    <span style="font-size:.78rem;font-weight:700;color:#166534;">
+        ✓ Found {len(contacts)} contact{'s' if len(contacts) != 1 else ''} via Apollo
+    </span>
+</div>
+""", unsafe_allow_html=True)
+
+                    contact_labels = [f"{c['name']} — {c['title']}" for c in contacts]
+                    selected_idx = st.radio(
+                        "Select a contact to use:",
+                        options=range(len(contacts)),
+                        format_func=lambda i: contact_labels[i],
+                        key="apollo_selected_contact",
+                    )
+
+                    selected = contacts[selected_idx]
+                    email_display = selected["email"] if selected["email"] else "Not available (free plan)"
+
+                    st.markdown(f"""
+<div style="background:#fff;border:1px solid #e8ecf0;border-left:4px solid #6366f1;
+            border-radius:10px;padding:18px 22px;margin:10px 0 18px 0;">
+    <div style="font-size:1rem;font-weight:700;color:#1a1f36;margin-bottom:4px;">
+        {selected['name']}
+    </div>
+    <div style="font-size:.875rem;color:#6b7280;margin-bottom:10px;">
+        {selected['title']} · {selected['company']}
+    </div>
+    <div style="font-size:.82rem;color:#374151;">
+        📧 {email_display}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+                    # Persist selected contact into session state
+                    st.session_state["_contact_name"]          = selected["name"]
+                    st.session_state["_contact_role"]          = selected["title"]
+                    st.session_state["_contact_company_domain"] = selected.get("company_domain", "")
+                    st.session_state["_contact_source"]        = "apollo"
+
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+        # ── TIER 2: LinkedIn text paste ────────────────────────────────────────
+        with st.expander("📋 Or paste a LinkedIn profile for enrichment"):
             st.markdown(
                 "Go to their LinkedIn profile → select all text on the page "
                 "(**Ctrl+A**) → paste it here. Claude will extract their name, "
@@ -1031,6 +1247,24 @@ with tab3:
                 'Hook extracted for email personalization.'
                 '</div>',
                 unsafe_allow_html=True,
+            )
+
+        # ── TIER 3: Manual entry (always visible fallback) ─────────────────────
+        st.markdown("#### ✏️ Contact Details")
+        m_col1, m_col2 = st.columns(2, gap="medium")
+        with m_col1:
+            contact_name_input = st.text_input(
+                "Contact Name",
+                placeholder="Sarah Chen",
+                key="contact_name_field",
+                value=st.session_state.get("_contact_name", ""),
+            )
+        with m_col2:
+            contact_role_input = st.text_input(
+                "Contact Title / Role",
+                placeholder="VP of Revenue Operations",
+                key="contact_role_field",
+                value=st.session_state.get("_contact_role", ""),
             )
 
         st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
@@ -1055,9 +1289,25 @@ with tab3:
 
         st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-        # ── Generate button ───────────────────────────────────────────────────
+        # ── Domain mismatch check (before generate button) ────────────────────
         contact_name = contact_name_input.strip()
         contact_role = contact_role_input.strip()
+
+        _target_url     = st.session_state.get("_company_url", "")
+        _contact_domain = st.session_state.get("_contact_company_domain", "")
+
+        if _contact_domain and _target_url:
+            _mismatch = detect_domain_mismatch(
+                target_url=_target_url,
+                contact_company_domain=_contact_domain,
+                contact_name=contact_name or st.session_state.get("_contact_name", ""),
+                contact_title=contact_role or st.session_state.get("_contact_role", ""),
+            )
+            if _mismatch["mismatch"]:
+                st.warning(_mismatch["message"], icon="⚠️")
+                st.checkbox("I understand — proceed anyway", key="mismatch_acknowledged")
+
+        # ── Generate button ───────────────────────────────────────────────────
         can_generate = bool(contact_name and contact_role)
 
         gen_col, _ = st.columns([1, 3])
@@ -1362,8 +1612,10 @@ if generate_btn and can_generate:
                     st.session_state["_contact_role"] = parsed["title"]
                     contact_role = parsed["title"]
                 hook = parsed.get("hook") or None
-                st.session_state["_hook"]           = hook
-                st.session_state["_linkedin_parsed"] = True
+                st.session_state["_hook"]                   = hook
+                st.session_state["_linkedin_parsed"]        = True
+                st.session_state["_contact_company_domain"] = parsed.get("company_domain") or ""
+                st.session_state["_contact_source"]         = "linkedin"
             except Exception as e:
                 st.warning(f"LinkedIn parse skipped: {e}")
 
