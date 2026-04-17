@@ -17,15 +17,15 @@ jobs:
 
     steps:
       # ── 1. Ping the Streamlit app ─────────────────────────────────────────
-      # Streamlit Community Cloud redirects through several hops before
-      # landing, so -f (fail-on-4xx/5xx) combined with -L triggers curl
-      # exit 47 (too many redirects). Instead we capture the final HTTP
-      # status code and fail explicitly only on 5xx or a connection error
-      # (status 000). 2xx/3xx/4xx all mean the app is reachable.
+      # Do NOT follow redirects (-L). Streamlit Cloud chains many redirects
+      # before the final page; following them all triggers curl exit 47
+      # (too many redirects). We only need the *first* response to prove
+      # the server is reachable — that's enough to wake the app.
+      # Fail only on status 000 (no connection) or 5xx (server error).
       - name: Ping Streamlit app
         run: |
           echo "Pinging https://gtm-outreach-tool.streamlit.app/ ..."
-          STATUS=$(curl -sSL --max-time 60 --max-redirs 15 \
+          STATUS=$(curl -sS --max-time 60 \
             -o /dev/null -w "%{http_code}" \
             https://gtm-outreach-tool.streamlit.app/)
           echo "HTTP status: $STATUS"
