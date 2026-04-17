@@ -27,16 +27,48 @@ anthropic_key = _secret("ANTHROPIC_API_KEY")
 
 
 # ── ICP dropdown option lists ─────────────────────────────────────────────────
-COMPANY_SIZES  = ["1–10", "11–50", "51–200", "201–500", "501–1,000", "1,000–5,000", "5,000+"]
-INDUSTRIES     = ["SaaS", "E-commerce", "Fintech", "Healthcare", "EdTech",
-                  "Enterprise Software", "MarTech", "HR Tech", "Other"]
-LOCATIONS      = ["US", "Canada", "UK", "Europe", "APAC", "Global", "Other"]
-FUNDING_STAGES = ["Bootstrapped", "Pre-seed", "Seed", "Series A",
-                  "Series B", "Series C+", "Public"]
-TECH_STACK     = ["Salesforce", "HubSpot", "Slack", "Zoom", "AWS",
-                  "Google Workspace", "Microsoft 365", "Other"]
-PAIN_POINTS    = ["Pipeline visibility", "Revenue ops", "Sales efficiency",
-                  "Customer retention", "Data quality", "Lead generation", "Other"]
+COMPANY_SIZES = [
+    "1–10", "11–50", "51–200", "201–500",
+    "501–1,000", "1,000–5,000", "5,000+"
+]
+
+INDUSTRIES = [
+    "SaaS", "E-commerce", "Fintech", "Healthcare",
+    "EdTech", "Enterprise Software", "MarTech", "HR Tech",
+    "Cybersecurity", "Developer Tools / DevOps",
+    "Real Estate / PropTech", "Legal Tech",
+    "Supply Chain / Logistics", "Media & Publishing",
+    "Climate Tech / CleanTech", "Professional Services",
+    "Retail / Consumer", "Other"
+]
+
+LOCATIONS = [
+    "US", "Canada", "UK", "Europe", "APAC",
+    "Latin America", "Middle East & Africa",
+    "Southeast Asia", "Global", "Other"
+]
+
+FUNDING_STAGES = [
+    "Bootstrapped", "Pre-seed", "Seed",
+    "Series A", "Series B", "Series C", "Series D+",
+    "Growth Stage", "PE-backed", "Public", "Other"
+]
+
+TECH_STACK = [
+    "Salesforce", "HubSpot", "Slack", "Zoom",
+    "AWS", "Google Workspace", "Microsoft 365",
+    "Outreach", "Salesloft", "Gong", "Marketo",
+    "Snowflake", "Looker / Tableau", "Jira / Linear",
+    "Other"
+]
+
+PAIN_POINTS = [
+    "Pipeline visibility", "Revenue ops", "Sales efficiency",
+    "Customer retention", "Data quality", "Lead generation",
+    "Forecast accuracy", "Sales and marketing alignment",
+    "Onboarding / time-to-value", "Churn reduction",
+    "Pricing optimization", "Other"
+]
 
 SENIORITY_COLOURS = {
     "IC":          "#6366f1",
@@ -189,22 +221,64 @@ def extract_json_block(text: str) -> dict:
 def build_icp_string(
     company_size: str,
     industries: list,
-    location: str,
-    funding_stage: str,
+    industries_other: str,
+    locations: list,
+    locations_other: str,
+    funding_stages: list,
+    funding_other: str,
     tech_stack: list,
+    tech_other: str,
     pain_points: list,
+    pain_other: str,
+    additional: str,
 ) -> str:
     """
     Assemble the structured ICP dropdown selections into a single human-readable
     string that can be passed directly into the Claude analysis prompt.
     """
     parts = []
-    if company_size:                parts.append(f"Company size: {company_size} employees")
-    if industries:                  parts.append(f"Industry: {', '.join(industries)}")
-    if location:                    parts.append(f"Location: {location}")
-    if funding_stage:               parts.append(f"Funding stage: {funding_stage}")
-    if tech_stack:                  parts.append(f"Uses: {', '.join(tech_stack)}")
-    if pain_points:                 parts.append(f"Key pain points: {', '.join(pain_points)}")
+
+    if company_size:
+        parts.append(f"Company size: {company_size} employees")
+
+    if industries:
+        industry_list = [i for i in industries if i != "Other"]
+        if industries_other:
+            industry_list.append(industries_other)
+        if industry_list:
+            parts.append(f"Industry: {', '.join(industry_list)}")
+
+    if locations:
+        loc_list = [l for l in locations if l != "Other"]
+        if locations_other:
+            loc_list.append(locations_other)
+        if loc_list:
+            parts.append(f"Location: {', '.join(loc_list)}")
+
+    if funding_stages:
+        fund_list = [f for f in funding_stages if f != "Other"]
+        if funding_other:
+            fund_list.append(funding_other)
+        if fund_list:
+            parts.append(f"Funding stage: {', '.join(fund_list)}")
+
+    if tech_stack:
+        tech_list = [t for t in tech_stack if t != "Other"]
+        if tech_other:
+            tech_list.append(tech_other)
+        if tech_list:
+            parts.append(f"Uses: {', '.join(tech_list)}")
+
+    if pain_points:
+        pain_list = [p for p in pain_points if p != "Other"]
+        if pain_other:
+            pain_list.append(pain_other)
+        if pain_list:
+            parts.append(f"Key pain points: {', '.join(pain_list)}")
+
+    if additional and additional.strip():
+        parts.append(f"Additional context: {additional.strip()}")
+
     return "; ".join(parts) if parts else "No specific ICP criteria defined"
 
 
@@ -642,54 +716,131 @@ tab1, tab2, tab3, tab4 = st.tabs([
 
 # ── Tab 1: Setup ──────────────────────────────────────────────────────────────
 with tab1:
-    col_a, col_b = st.columns([1, 1], gap="large")
 
-    # Left column: product description + ICP dropdowns
-    with col_a:
+    # ── SECTION A: Core Inputs ────────────────────────────────────────────────
+    sec_a_left, sec_a_right = st.columns([1, 1], gap="large")
+
+    with sec_a_left:
         st.markdown('<div class="card-title">Your Product</div>', unsafe_allow_html=True)
         product_desc = st.text_area(
             "Product Description",
-            height=110,
+            height=130,
             placeholder="E.g. Acme is a revenue intelligence platform that helps B2B sales teams identify buying signals, prioritise outreach, and increase win rates by 30%.",
             help="Describe your product's core value proposition.",
         )
 
-        # ICP section — structured dropdowns replace the old free-text field
-        st.markdown('<div class="icp-header">🎯 ICP Criteria</div>', unsafe_allow_html=True)
-
-        icp_size = st.selectbox("Company Size", [""] + COMPANY_SIZES,
-                                format_func=lambda x: "Any size" if x == "" else x,
-                                help="Number of employees at the target company.")
-        icp_industries = st.multiselect("Industry", INDUSTRIES,
-                                        help="Select one or more industries that match your ICP.")
-        icp_location = st.selectbox("Location", [""] + LOCATIONS,
-                                    format_func=lambda x: "Any location" if x == "" else x)
-        icp_funding = st.selectbox("Funding Stage", [""] + FUNDING_STAGES,
-                                   format_func=lambda x: "Any stage" if x == "" else x)
-        icp_tech = st.multiselect("Tech Stack", TECH_STACK,
-                                  help="Tools the ideal customer already uses.")
-        icp_pain = st.multiselect("Pain Points", PAIN_POINTS,
-                                  help="Challenges your ICP is actively facing.")
-
-    # Right column: target company URL only (contact moves to Tab 3)
-    with col_b:
+    with sec_a_right:
         st.markdown('<div class="card-title">Target Company</div>', unsafe_allow_html=True)
-
         company_url = st.text_input(
             "Target Company URL",
             placeholder="https://www.acme.com",
             help="Claude infers company context from the domain.",
         )
 
+    # ── SECTION B: ICP Criteria ───────────────────────────────────────────────
+    st.markdown('<div class="icp-header">🎯 ICP Criteria</div>', unsafe_allow_html=True)
+
+    sec_b_left, sec_b_right = st.columns([1, 1], gap="large")
+
+    with sec_b_left:
+        icp_size = st.selectbox(
+            "Company Size", [""] + COMPANY_SIZES,
+            format_func=lambda x: "Any size" if x == "" else x,
+            help="Number of employees at the target company.",
+        )
+
+        icp_industries = st.multiselect(
+            "Industry", INDUSTRIES,
+            help="Select one or more industries that match your ICP.",
+        )
+        if "Other" in icp_industries:
+            icp_industries_other = st.text_input(
+                "Specify other industry",
+                placeholder="e.g. Space Tech, Gaming, GovTech...",
+                key="industry_other",
+            )
+        else:
+            icp_industries_other = ""
+
+        icp_location = st.multiselect(
+            "Location", LOCATIONS,
+            help="Select one or more regions.",
+        )
+        if "Other" in icp_location:
+            icp_location_other = st.text_input(
+                "Specify other location",
+                placeholder="e.g. Sub-Saharan Africa, Central Asia...",
+                key="location_other",
+            )
+        else:
+            icp_location_other = ""
+
+        icp_funding = st.multiselect(
+            "Funding Stage", FUNDING_STAGES,
+            help="Select one or more funding stages that match your ICP.",
+        )
+        if "Other" in icp_funding:
+            icp_funding_other = st.text_input(
+                "Specify other funding stage",
+                placeholder="e.g. Corporate venture, Government-funded...",
+                key="funding_other",
+            )
+        else:
+            icp_funding_other = ""
+
+    with sec_b_right:
+        icp_tech = st.multiselect(
+            "Tech Stack", TECH_STACK,
+            help="Tools the ideal customer already uses.",
+        )
+        if "Other" in icp_tech:
+            icp_tech_other = st.text_input(
+                "Specify other tech",
+                placeholder="e.g. Intercom, Segment, dbt...",
+                key="tech_other",
+            )
+        else:
+            icp_tech_other = ""
+
+        icp_pain = st.multiselect(
+            "Pain Points", PAIN_POINTS,
+            help="Challenges your ICP is actively facing.",
+        )
+        if "Other" in icp_pain:
+            icp_pain_other = st.text_input(
+                "Specify other pain point",
+                placeholder="e.g. Multi-product bundling, Territory conflicts...",
+                key="pain_other",
+            )
+        else:
+            icp_pain_other = ""
+
+        icp_additional = st.text_area(
+            "Additional ICP Details (optional)",
+            height=90,
+            placeholder=(
+                "Anything else that defines your ideal customer — "
+                "e.g. 'must have a dedicated sales team', "
+                "'companies that recently hired a VP of Sales', "
+                "'using a legacy CRM they want to replace'..."
+            ),
+            help="Free-form context that doesn't fit the dropdowns above. Claude will factor this in.",
+        )
+
     # ── Assemble ICP string from dropdowns ────────────────────────────────────
     icp_string = build_icp_string(
-        icp_size, icp_industries, icp_location,
-        icp_funding, icp_tech, icp_pain,
+        icp_size,
+        icp_industries, icp_industries_other,
+        icp_location, icp_location_other,
+        icp_funding, icp_funding_other,
+        icp_tech, icp_tech_other,
+        icp_pain, icp_pain_other,
+        icp_additional,
     )
 
+    # ── SECTION C: Qualify button ─────────────────────────────────────────────
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── Qualify button ────────────────────────────────────────────────────────
     can_qualify = bool(product_desc.strip() and company_url.strip())
 
     run_col, _ = st.columns([1, 3])
