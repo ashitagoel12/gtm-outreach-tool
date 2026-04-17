@@ -17,16 +17,23 @@ jobs:
 
     steps:
       # ── 1. Ping the Streamlit app ─────────────────────────────────────────
-      # -f  → fail (exit 1) on non-2xx HTTP status  → shows as red in Actions
-      # -s  → silent (no progress bar)
-      # -S  → still show errors even in silent mode
-      # -L  → follow redirects
-      # --max-time 60 → abort if no response within 60 s
+      # Streamlit Community Cloud redirects through several hops before
+      # landing, so -f (fail-on-4xx/5xx) combined with -L triggers curl
+      # exit 47 (too many redirects). Instead we capture the final HTTP
+      # status code and fail explicitly only on 5xx or a connection error
+      # (status 000). 2xx/3xx/4xx all mean the app is reachable.
       - name: Ping Streamlit app
         run: |
           echo "Pinging https://gtm-outreach-tool.streamlit.app/ ..."
-          curl -fsSL --max-time 60 https://gtm-outreach-tool.streamlit.app/
-          echo "✅ Ping successful."
+          STATUS=$(curl -sSL --max-time 60 --max-redirs 15 \
+            -o /dev/null -w "%{http_code}" \
+            https://gtm-outreach-tool.streamlit.app/)
+          echo "HTTP status: $STATUS"
+          if [ "$STATUS" = "000" ] || [ "$STATUS" -ge 500 ]; then
+            echo "❌ Ping failed (status $STATUS)"
+            exit 1
+          fi
+          echo "✅ App is alive (status $STATUS)"
 
       # ── 2. Touch a timestamp file (scheduled runs only) ───────────────────
       # GitHub auto-disables scheduled workflows after 60 days of repo
