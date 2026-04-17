@@ -1,6 +1,6 @@
 # 🎯 GTM Outreach Intelligence Tool
 
-> AI-powered ICP analysis, seniority advisor, and personalized email sequence generator with HubSpot CRM integration.
+> AI-powered 3-stage GTM workflow: qualify the account → identify your contact → generate a personalized email sequence.
 
 **[Live Demo →](https://gtm-outreach-tool.streamlit.app)**
 
@@ -8,31 +8,33 @@
 
 ## What it does
 
-Sales and GTM teams spend hours manually researching companies, scoring fit, and writing cold emails. This tool automates the entire workflow in under 60 seconds:
+Sales and GTM teams waste time writing cold emails to companies that aren't even worth targeting, or reaching out to the wrong person. V3 fixes the workflow order:
 
-1. **Score ICP fit** — Claude analyzes a target company URL against your structured ICP criteria, returning a 1–10 score, strengths, gaps, and a recommended outreach angle.
-2. **Advise on seniority** — Claude recommends the right seniority level (IC → C-Level) to target based on the ICP fit and your product.
-3. **Generate a 4-email sequence** — fully personalized cold outreach (Day 1 → Day 17) tailored to the contact's role, company, and chosen tone.
-4. **Review & edit** — edit subjects and bodies inline, approve or exclude individual emails before pushing.
-5. **Export** — download the sequence as a CSV or sync to HubSpot (contact + Notes + Tasks) with one click.
+1. **Qualify the account first** — Claude scores the company's ICP fit (1–10), identifies strengths and gaps, and recommends the best outreach angle *before* you decide to pursue it.
+2. **See who to target** — Claude recommends the right seniority level (IC → C-Level) based on the ICP fit and your product. Now you know *who* to find, not just *whether* to pursue.
+3. **Add your contact** — Enter name + title manually, or paste their LinkedIn profile page and Claude extracts the details plus a personalization hook.
+4. **Generate a 4-email sequence** — Fully personalized cold outreach (Day 1 → Day 17) tailored to the contact, company, recommended angle, and chosen tone.
+5. **Review, export, or sync** — Edit inline, download as CSV, or push to HubSpot (contact + Notes + Tasks) with one click.
 
 ---
 
-## Features — V2
+## Features — V3
 
 | Feature | Description |
 |---|---|
 | 🎯 **Structured ICP Dropdowns** | Six dropdowns: company size, industry, location, funding stage, tech stack, pain points |
 | 🧠 **ICP Fit Scoring** | Claude scores company fit 1–10 with verdict, strengths, gaps, and outreach angle |
-| 💼 **Seniority Advisor** | Claude recommends primary + secondary seniority levels with reasoning |
-| 🔗 **LinkedIn Enrichment** | Auto-extract contact name from a LinkedIn profile URL (Apollo/Clay in V3) |
+| 💼 **Seniority Advisor** | Claude recommends primary + secondary seniority levels with reasoning — shown *before* you pick a contact |
+| 📋 **LinkedIn Profile Parser** | Paste the full LinkedIn page text → Claude extracts name, title, and a personalization hook for Email 1 |
 | ✍️ **Email Tone Selector** | Three tones: Professional / Casual & Friendly / Direct & No-Nonsense |
 | ✉️ **4-Email Sequence** | Day 1 / 4 / 9 / 17 personalized emails with suggested send dates |
+| 🔗 **Personalization Hook** | If a LinkedIn hook was extracted, Claude weaves it into Email 1 automatically |
 | ✅ **Review & Approve** | Edit subject and body inline; check/uncheck emails before sync |
 | 📋 **One-click Copy** | Copy-ready expander with subject + body in a single block per email |
 | 📥 **CSV Export** | Download sequence with edits, approval status, tone, and contact metadata |
 | 🔶 **HubSpot CRM Sync** | Creates contact + logs approved emails as Notes and dated Tasks |
-| 📊 **Tabs Layout** | ⚙️ Setup · 📊 Analysis · 📧 Emails · 📤 Export |
+| 🗺️ **Stage Progress** | Sidebar shows Stage 1 / 2 / 3 completion status at a glance |
+| 🔒 **Gated Tabs** | Contact tab locked until account is qualified; Emails tab locked until sequence is generated |
 | 📈 **Live Sidebar Stats** | ICP score, tone, approved count, and contact name — updates in real time |
 | 🔒 **Secure by default** | Anthropic key from secrets; HubSpot token entered at runtime, never stored |
 
@@ -70,7 +72,7 @@ streamlit run app.py
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-> **HubSpot** uses a Personal Access Token you enter directly in the Export tab — no environment variable needed.
+> **HubSpot** uses a Personal Access Token you enter directly in the Emails + Export tab — no environment variable needed.
 
 ---
 
@@ -78,13 +80,14 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 | Step | Tab | Action |
 |---|---|---|
-| **1. Define ICP** | ⚙️ Setup | Choose company size, industry, location, funding stage, tech stack, and pain points from the dropdowns |
-| **2. Set target** | ⚙️ Setup | Paste company URL; enter contact name (or a LinkedIn URL) and role |
-| **3. Pick tone** | ⚙️ Setup | Choose Professional, Casual & Friendly, or Direct & No-Nonsense |
-| **4. Analyze** | ⚙️ Setup | Click ⚡ Analyze & Generate — Claude runs ICP analysis, seniority advisor, and email generation |
-| **5. Review score** | 📊 Analysis | See ICP fit score, strengths/gaps chips, outreach angle, and recommended seniority level |
-| **6. Edit emails** | 📧 Emails | Edit subjects and bodies inline; uncheck any you want to exclude |
-| **7. Export or sync** | 📤 Export | Download as CSV, or enter your HubSpot token and push approved emails as Notes + Tasks |
+| **1. Define ICP** | ⚙️ Setup | Choose company size, industry, location, funding stage, tech stack, and pain points |
+| **2. Set target** | ⚙️ Setup | Paste company URL → click ⚡ Qualify This Account |
+| **3. Review qualification** | 🎯 Qualification | See ICP score, strengths/gaps, outreach angle, and recommended seniority |
+| **4. Proceed to contact** | 🎯 Qualification | Click "→ I Found My Contact" to jump to the Contact tab |
+| **5. Add your contact** | 👤 Contact | Enter name + title manually, or paste their LinkedIn page text for auto-fill + hook |
+| **6. Choose tone & generate** | 👤 Contact | Pick email tone → click ✉️ Generate Email Sequence |
+| **7. Review & edit** | 📧 Emails + Export | Edit subjects/bodies inline; uncheck any to exclude |
+| **8. Export or sync** | 📧 Emails + Export | Download as CSV, or enter HubSpot token and push approved emails as Notes + Tasks |
 
 ---
 
@@ -103,12 +106,11 @@ ANTHROPIC_API_KEY=sk-ant-...
 ## Architecture
 
 ```
-User Input (⚙️ Setup tab)
+STAGE 1 — Account Qualification (⚙️ Setup tab)
   │
   ├─ Product description
   ├─ ICP dropdowns → build_icp_string()
-  ├─ Target company URL + contact
-  └─ Email tone
+  └─ Target company URL
         │
         ▼
   Claude Sonnet 4.5 (streaming)
@@ -116,26 +118,42 @@ User Input (⚙️ Setup tab)
         ├─ [Call 1] ICP Fit Analysis
         │     └─ score, verdict, strengths, gaps, outreach angle
         │
-        ├─ [Call 2] Seniority Advisor
-        │     └─ primary level, secondary level, reasoning
+        └─ [Call 2] Seniority Advisor
+              └─ primary level, secondary level, reasoning
+                    │
+                    ▼ (🎯 Qualification tab — review + proceed)
+
+STAGE 2 — Contact Identification (👤 Contact tab)
+  │
+  ├─ Manual: contact name + title
+  └─ Optional: paste LinkedIn profile text
         │
-        └─ [Call 3] Email Sequence Generation (tone-aware)
-              └─ 4 emails: Day 1 / 4 / 9 / 17
-                    │
-                    ▼ (📧 Emails tab — review & edit)
-              User approves / edits emails
-                    │
-                    ▼ (📤 Export tab)
-              ┌─────────────────────────────┐
-              │  CSV download (st.download) │
-              │  HubSpot CRM API v3         │
-              │  ├─ POST /contacts          │
-              │  ├─ POST /notes  (×N)       │
-              │  └─ POST /tasks  (×N)       │
-              └─────────────────────────────┘
+        ▼
+  [Call 3] LinkedIn Profile Parser (if text pasted)
+        └─ name, title, personalization hook
+              │
+              ▼ (auto-fill fields; hook stored in session state)
+
+STAGE 3 — Email Generation + Export (📧 Emails + Export tab)
+  │
+  ▼
+  [Call 4] Email Sequence Generation (tone-aware, hook-aware)
+        └─ 4 emails: Day 1 / 4 / 9 / 17
+              │
+              ▼ (review & edit)
+        User approves / edits emails
+              │
+              ▼
+        ┌─────────────────────────────┐
+        │  CSV download (st.download) │
+        │  HubSpot CRM API v3         │
+        │  ├─ POST /contacts          │
+        │  ├─ POST /notes  (×N)       │
+        │  └─ POST /tasks  (×N)       │
+        └─────────────────────────────┘
 ```
 
-All Claude calls use `client.messages.stream()` to avoid timeouts. Results are stored in `st.session_state` so the two-block pattern (execute once on click, render on every rerun) keeps the UI stable across widget interactions.
+All Claude calls use `client.messages.stream()` to avoid timeouts. Results are stored in `st.session_state` with stage flags (`stage1_complete`, `stage2_complete`) that gate tab content and button availability.
 
 ---
 
