@@ -197,6 +197,59 @@ st.markdown("""
 
   .section-divider { border:none; border-top:1px solid #e8ecf0; margin: 28px 0; }
   label { font-weight: 600 !important; }
+
+  /* ── Tab navigation ────────────────────────────────────────────────────── */
+
+  /* Tab list container */
+  [data-testid="stTabs"] [role="tablist"] {
+    gap: 6px;
+    border-bottom: 2px solid #e8ecf0;
+    padding-bottom: 0;
+    background: transparent;
+  }
+
+  /* Individual tab buttons — default (inactive) state */
+  [data-testid="stTabs"] [role="tab"] {
+    background: #f1f3f9;
+    border: 1px solid #e2e6ef;
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    padding: 10px 22px;
+    font-size: .82rem;
+    font-weight: 600;
+    color: #6b7280;
+    letter-spacing: 0.01em;
+    transition: background 0.15s ease, color 0.15s ease;
+    margin-bottom: -2px;
+  }
+
+  /* Hover state */
+  [data-testid="stTabs"] [role="tab"]:hover {
+    background: #e8ecf8;
+    color: #374151;
+    border-color: #c7d0e8;
+  }
+
+  /* Active (selected) tab */
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
+    background: #ffffff;
+    border-color: #e8ecf0;
+    border-bottom: 2px solid #ffffff;
+    color: #1a1f36;
+    font-weight: 700;
+  }
+
+  /* Remove Streamlit's default red/orange active tab underline */
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"]::after,
+  [data-testid="stTabs"] [role="tab"][aria-selected="true"]::before {
+    display: none;
+  }
+
+  /* Tab content panel — remove default top padding gap */
+  [data-testid="stTabs"] [role="tabpanel"] {
+    padding-top: 24px;
+    border-top: none;
+  }
 </style>
 """, unsafe_allow_html=True)
 
