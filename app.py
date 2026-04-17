@@ -1,10 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# GTM Outreach Intelligence Tool — V2
-# Streamlit app: structured ICP dropdowns, LinkedIn enrichment, seniority
-# advisor, personalised 4-email sequence, HubSpot CRM sync.
+# GTM Outreach Intelligence Tool — V3
+# Streamlit app: 3-stage gated workflow — account qualification, contact
+# identification, email generation + export.  HubSpot CRM sync included.
 # ─────────────────────────────────────────────────────────────────────────────
 
 import streamlit as st
+import streamlit.components.v1 as components
 import anthropic
 import requests
 import json
@@ -155,6 +156,13 @@ st.markdown("""
     font-weight:600; margin:3px;
   }
 
+  /* Context recap bar */
+  .context-recap {
+    background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 8px;
+    padding: 10px 16px; font-size: .82rem; color: #3730a3;
+    margin-bottom: 20px; font-weight: 600;
+  }
+
   .section-divider { border:none; border-top:1px solid #e8ecf0; margin: 28px 0; }
   label { font-weight: 600 !important; }
 </style>
@@ -231,41 +239,6 @@ def build_csv(emails: list, tone: str, contact_name: str, company_url: str) -> s
             company_url,
         ])
     return buf.getvalue()
-
-
-# ── LinkedIn enrichment (placeholder — Apollo/Clay integration in V3) ─────────
-
-def is_linkedin_url(text: str) -> bool:
-    """Return True if the input looks like a LinkedIn profile URL."""
-    return "linkedin.com/in/" in text.lower()
-
-
-def extract_from_linkedin_url(url: str) -> dict:
-    """
-    Placeholder LinkedIn enrichment function.
-    Parses the profile handle from the URL and converts it to a display name.
-    In V3 this will call Apollo.io or Clay's enrichment API for full profile data.
-
-    Returns a dict with: success, name, title, message.
-    """
-    try:
-        # Pull the slug: linkedin.com/in/sarah-chen-ab1234 → "sarah-chen-ab1234"
-        handle = url.rstrip("/").split("/in/")[-1].split("/")[0].split("?")[0]
-        # Drop trailing numeric IDs (e.g. "sarah-chen-12345" → ["sarah", "chen"])
-        name_parts = [p for p in handle.split("-") if not p.isdigit()]
-        name = " ".join(p.capitalize() for p in name_parts if p) or "LinkedIn User"
-        return {
-            "success": True,
-            "name":    name,
-            "title":   "",      # can't reliably extract from URL alone
-            "message": (
-                f"✓ Name extracted from LinkedIn URL: <strong>{name}</strong>. "
-                "Full enrichment (title, company, email) via Apollo/Clay coming in V3."
-            ),
-        }
-    except Exception as exc:
-        return {"success": False, "name": "", "title": "",
-                "message": f"Could not parse LinkedIn URL: {exc}"}
 
 
 # ── Claude API calls ──────────────────────────────────────────────────────────
@@ -345,6 +318,32 @@ Return ONLY valid JSON (no markdown):
     return extract_json_block(text)
 
 
+def run_linkedin_parse(client: anthropic.Anthropic, profile_text: str) -> dict:
+    """
+    Parse pasted LinkedIn profile text to extract structured contact info.
+    Returns: name, title, company, hook (or None).
+    """
+    prompt = f"""Extract structured contact information from this LinkedIn profile page text.
+Return ONLY valid JSON:
+{{
+  "name": "<full name>",
+  "title": "<current job title>",
+  "company": "<current company name>",
+  "hook": "<one specific, concrete detail from their background that could personalize a cold email — e.g. 'recently promoted from Director to VP', 'previously at Salesforce', 'posted about scaling their RevOps team', 'company just raised Series B'. If nothing specific, return null.>"
+}}
+
+PROFILE TEXT:
+{profile_text}"""
+
+    with client.messages.stream(
+        model="claude-sonnet-4-5",
+        max_tokens=512,
+        messages=[{"role": "user", "content": prompt}],
+    ) as stream:
+        text = next((b.text for b in stream.get_final_message().content if b.type == "text"), "")
+    return extract_json_block(text)
+
+
 def run_sequence_generation(
     client: anthropic.Anthropic,
     product: str,
@@ -354,15 +353,21 @@ def run_sequence_generation(
     contact_role: str,
     angle: str,
     tone: str = "Professional",
+    hook: str = None,
 ) -> list:
     """
     Generate a 4-email cold outreach sequence.
     Returns list of dicts: sequence, send_day, send_label, subject, body.
     `tone` must be one of the keys in TONES; its description is injected into
     the prompt so Claude calibrates vocabulary, sentence length, and formality.
+    Optional `hook` injects a personalization detail into Email 1.
     """
     first_name  = contact_name.strip().split()[0] if contact_name.strip() else "there"
     tone_desc   = TONES.get(tone, TONES["Professional"])
+    hook_line   = (
+        f"\nPERSONALIZATION HOOK (use this specific detail in Email 1 if relevant): {hook}"
+        if hook else ""
+    )
 
     prompt = f"""You are an elite B2B sales copywriter. Write a 4-email cold outreach sequence.
 
@@ -371,7 +376,7 @@ ICP CRITERIA: {icp}
 TARGET COMPANY: {company_url}
 CONTACT: {contact_name}, {contact_role}
 LEADING ANGLE: {angle}
-EMAIL TONE: {tone} — {tone_desc}
+EMAIL TONE: {tone} — {tone_desc}{hook_line}
 
 Guidelines:
 - Email 1 (Day 1): Hyper-personalised opener, reference their company, one clear value prop, soft CTA
@@ -534,17 +539,30 @@ def push_to_hubspot(
 with st.sidebar:
     st.markdown("### How it works")
     st.markdown("""
-1. **Define ICP** — use dropdowns to describe your ideal customer
-2. **Set target** — paste company URL and contact details
-3. **Analyze** — Claude scores fit and recommends contact seniority
-4. **Generate** — 4 personalised emails with send timing
-5. **Sync** *(optional)* — push to HubSpot with your token
+1. **Qualify the account** — paste a company URL and score ICP fit
+2. **See who to target** — Claude recommends the right role/seniority
+3. **Add your contact** — name + title, or paste their LinkedIn profile
+4. **Generate emails** — personalized 4-email sequence with tone control
+5. **Export or sync** — CSV download or HubSpot CRM sync
 """)
     st.divider()
 
+    # ── Stage progress ────────────────────────────────────────────────────────
+    _s1 = st.session_state.get("stage1_complete", False)
+    _s2 = st.session_state.get("stage2_complete", False)
+    _s3 = bool(st.session_state.get("emails"))
+
+    st.markdown("### 🗺️ Progress")
+    st.markdown(
+        f'<div style="background:#f8f9fc;border:1px solid #e8ecf0;border-radius:10px;padding:14px 16px;margin-bottom:12px;">'
+        f'<div style="font-size:.75rem;margin-bottom:6px;">{"✅" if _s1 else "🔒"} Stage 1: Account Qualified</div>'
+        f'<div style="font-size:.75rem;margin-bottom:6px;">{"✅" if _s2 else "🔒"} Stage 2: Contact Added</div>'
+        f'<div style="font-size:.75rem;">{"✅" if _s3 else "🔒"} Stage 3: Emails Ready</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
     # ── Live session stats ────────────────────────────────────────────────────
-    # Shown once an analysis has been run; updates automatically as the user
-    # edits emails or toggles approval checkboxes.
     if st.session_state.get("analysis") and st.session_state.get("emails"):
         _a   = st.session_state["analysis"]
         _e   = st.session_state["emails"]
@@ -585,32 +603,41 @@ with st.sidebar:
         )
         st.divider()
 
-    st.caption("GTM Outreach Intelligence · V2")
+    st.caption("GTM Outreach Intelligence · V3")
 
 
 # ── Hero ──────────────────────────────────────────────────────────────────────
 
 st.markdown("""
 <div class="hero">
-  <h1>🎯 GTM Outreach Intelligence <span class="v2-badge">V2</span></h1>
-  <p>AI-powered ICP analysis, seniority advisor &amp; personalised email sequence generator</p>
+  <h1>🎯 GTM Outreach Intelligence <span class="v2-badge">V3</span></h1>
+  <p>3-stage workflow: qualify the account → identify your contact → generate a personalised email sequence</p>
 </div>
 """, unsafe_allow_html=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TABBED LAYOUT
-# Tab 1 ⚙️ Setup   — ICP form, tone selector, analyze button
-# Tab 2 📊 Analysis — ICP score card + seniority advisor
-# Tab 3 📧 Emails   — review & approve editable email cards
-# Tab 4 📤 Export   — CSV download + HubSpot CRM sync
+# Tab 1 ⚙️ Setup          — ICP form + company URL, qualify button
+# Tab 2 🎯 Qualification   — ICP score, seniority advisor, proceed CTA
+# Tab 3 👤 Contact         — contact input, LinkedIn paste, tone, generate
+# Tab 4 📧 Emails + Export — review/approve, CSV download, HubSpot sync
 #
-# All four tabs render on every rerun (Streamlit tabs don't restrict execution).
-# Variables defined inside `with tab1:` (run_btn, can_run, etc.) are accessible
-# at module level after the block — Python with-statements don't create a scope.
+# Button variables are initialised to False before the tab blocks so the
+# handlers at the bottom can reference them safely regardless of gating.
 # ═════════════════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4 = st.tabs(["⚙️  Setup", "📊  Analysis", "📧  Emails", "📤  Export"])
+qualify_btn  = False
+can_qualify  = False
+generate_btn = False
+can_generate = False
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "⚙️  Setup",
+    "🎯  Qualification",
+    "👤  Contact",
+    "📧  Emails + Export",
+])
 
 
 # ── Tab 1: Setup ──────────────────────────────────────────────────────────────
@@ -644,56 +671,14 @@ with tab1:
         icp_pain = st.multiselect("Pain Points", PAIN_POINTS,
                                   help="Challenges your ICP is actively facing.")
 
-    # Right column: target company + contact
+    # Right column: target company URL only (contact moves to Tab 3)
     with col_b:
-        st.markdown('<div class="card-title">Target</div>', unsafe_allow_html=True)
+        st.markdown('<div class="card-title">Target Company</div>', unsafe_allow_html=True)
 
         company_url = st.text_input(
             "Target Company URL",
             placeholder="https://www.acme.com",
             help="Claude infers company context from the domain.",
-        )
-
-        st.markdown("")
-
-        # LinkedIn enrichment: accepts plain name or LinkedIn profile URL.
-        # Pull button parses the handle; full enrichment via Apollo/Clay in V3.
-        li_input = st.text_input(
-            "Contact Name or LinkedIn URL",
-            placeholder="Sarah Chen  or  https://linkedin.com/in/sarahchen",
-            help="Enter a name for manual input, or a LinkedIn URL to auto-extract details.",
-            key="li_input_field",
-        )
-
-        if li_input and is_linkedin_url(li_input):
-            pull_col, _ = st.columns([1, 2])
-            with pull_col:
-                pull_btn = st.button("🔗 Pull from LinkedIn", use_container_width=True,
-                                     key="linkedin_pull_btn")
-            if pull_btn:
-                st.session_state["linkedin_data"] = extract_from_linkedin_url(li_input)
-
-            if st.session_state.get("linkedin_data"):
-                ld     = st.session_state["linkedin_data"]
-                colour = "#166534" if ld["success"] else "#991b1b"
-                bg     = "#f0fdf4"  if ld["success"] else "#fff1f2"
-                border = "#bbf7d0"  if ld["success"] else "#fecaca"
-                st.markdown(
-                    f'<div class="linkedin-success" style="background:{bg};border-color:{border};color:{colour};">'
-                    f'{ld["message"]}</div>',
-                    unsafe_allow_html=True,
-                )
-        else:
-            if st.session_state.get("linkedin_data") and not is_linkedin_url(li_input):
-                st.session_state.pop("linkedin_data", None)
-
-        ld           = st.session_state.get("linkedin_data", {})
-        contact_name = ld.get("name", "") if (ld.get("success") and is_linkedin_url(li_input)) else li_input
-
-        contact_role = st.text_input(
-            "Contact Role / Title",
-            placeholder="VP of Revenue Operations",
-            help="Enter manually. Auto-fill coming in V3 with Apollo/Clay enrichment.",
         )
 
     # ── Assemble ICP string from dropdowns ────────────────────────────────────
@@ -704,65 +689,42 @@ with tab1:
 
     st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
-    # ── Email tone selector ───────────────────────────────────────────────────
-    st.markdown("### ✍️ Email Tone")
-    tone_col, _ = st.columns([2, 1])
-    with tone_col:
-        email_tone = st.radio(
-            "Choose the voice and style for your email sequence:",
-            options=list(TONES.keys()),
-            index=0,
-            horizontal=True,
-            key="email_tone",
-            help=(
-                "Professional — polished and formal  |  "
-                "Casual & Friendly — warm and conversational  |  "
-                "Direct & No-Nonsense — terse, value-first"
-            ),
-        )
-    st.caption(f"*{email_tone}:* {TONES[email_tone]}")
-
-    st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
-
-    # ── Analyze button ────────────────────────────────────────────────────────
-    # Requires product, company URL, and contact name. ICP + role are optional.
-    can_run = all([product_desc.strip(), company_url.strip(), contact_name.strip()])
+    # ── Qualify button ────────────────────────────────────────────────────────
+    can_qualify = bool(product_desc.strip() and company_url.strip())
 
     run_col, _ = st.columns([1, 3])
     with run_col:
-        run_btn = st.button(
-            "⚡ Analyze & Generate",
+        qualify_btn = st.button(
+            "⚡ Qualify This Account",
             type="primary",
-            disabled=not can_run,
+            disabled=not can_qualify,
             use_container_width=True,
         )
 
-    if not can_run:
+    if not can_qualify:
         missing = []
         if not product_desc.strip(): missing.append("Product Description")
         if not company_url.strip():  missing.append("Company URL")
-        if not contact_name.strip(): missing.append("Contact Name (or LinkedIn URL)")
         if missing:
             st.info(f"Complete to enable analysis: {' · '.join(missing)}", icon="ℹ️")
 
-    # ── Post-analysis indicator ───────────────────────────────────────────────
-    # Shown after results are ready; prompts the user to switch tabs.
-    if st.session_state.get("analysis") and st.session_state.get("emails"):
-        _score   = st.session_state["analysis"].get("score", 0)
-        _verdict = st.session_state["analysis"].get("verdict", "")
+    # Post-qualification indicator
+    if st.session_state.get("stage1_complete"):
+        _score   = st.session_state.get("analysis", {}).get("score", 0)
+        _verdict = st.session_state.get("analysis", {}).get("verdict", "")
         st.success(
-            f"✅ Analysis complete — ICP score **{_score}/10** ({_verdict}). "
-            "Switch to **📊 Analysis**, **📧 Emails**, or **📤 Export** to view results.",
+            f"✅ Account qualified — ICP score **{_score}/10** ({_verdict}). "
+            "Switch to **🎯 Qualification** to see results and proceed.",
             icon="🎯",
         )
 
 
-# ── Tab 2: Analysis ───────────────────────────────────────────────────────────
+# ── Tab 2: Qualification ──────────────────────────────────────────────────────
 with tab2:
-    if not st.session_state.get("analysis"):
+    if not st.session_state.get("stage1_complete"):
         st.info(
-            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
-            "to see your ICP fit analysis here.",
+            "Complete the **⚙️ Setup** tab and click **⚡ Qualify This Account** "
+            "to see results here.",
             icon="📊",
         )
     else:
@@ -813,7 +775,7 @@ with tab2:
 </div>
 """, unsafe_allow_html=True)
 
-        # Contact seniority advisor card
+        # ── Who to Target ─────────────────────────────────────────────────────
         if seniority:
             primary   = seniority.get("primary_level", "")
             secondary = seniority.get("secondary_level") or ""
@@ -834,25 +796,162 @@ with tab2:
 
             st.markdown(f"""
 <div class="seniority-card">
-  <div class="card-title" style="color:#7c3aed;">💼 Recommended Contact Seniority</div>
+  <div class="card-title" style="color:#7c3aed;">🎯 Who to Target at This Company</div>
   <div style="margin-bottom:12px;">{primary_badge}{secondary_badge}</div>
   <p style="color:#374151;font-size:.875rem;margin:0;">{reasoning}</p>
 </div>
 """, unsafe_allow_html=True)
 
+        # ── Proceed CTA ───────────────────────────────────────────────────────
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+        proceed_col, _ = st.columns([2, 2])
+        with proceed_col:
+            if st.button(
+                "→ I Found My Contact — Let's Write the Emails",
+                type="primary",
+                use_container_width=True,
+                key="proceed_to_contact_btn",
+            ):
+                st.session_state["_goto_contact"] = True
+                st.rerun()
 
-# ── Tab 3: Emails ─────────────────────────────────────────────────────────────
+
+# ── Tab 3: Contact ────────────────────────────────────────────────────────────
 with tab3:
-    if not st.session_state.get("emails"):
+    if not st.session_state.get("stage1_complete"):
         st.info(
-            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
-            "to generate your personalised email sequence here.",
-            icon="📧",
+            "Complete account qualification first (**⚙️ Setup** tab).",
+            icon="🔒",
         )
     else:
-        emails = st.session_state["emails"]
-        _tone  = st.session_state.get("_tone", "Professional")
+        # Context recap bar
+        _recap_url      = st.session_state.get("_company_url", "—")
+        _recap_score    = st.session_state.get("analysis", {}).get("score", "—")
+        _recap_seniority = st.session_state.get("seniority", {}).get("primary_level", "—")
+        st.markdown(
+            f'<div class="context-recap">'
+            f'Qualifying: {_recap_url} &nbsp;|&nbsp; '
+            f'ICP Score: {_recap_score}/10 &nbsp;|&nbsp; '
+            f'Target: {_recap_seniority}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
+        st.markdown("## 👤 Add Your Contact")
+
+        # ── Option A: Manual entry ────────────────────────────────────────────
+        st.markdown("#### Contact Details")
+        m_col1, m_col2 = st.columns(2, gap="medium")
+        with m_col1:
+            contact_name_input = st.text_input(
+                "Contact Name",
+                placeholder="Sarah Chen",
+                key="contact_name_field",
+                value=st.session_state.get("_contact_name", ""),
+            )
+        with m_col2:
+            contact_role_input = st.text_input(
+                "Contact Title / Role",
+                placeholder="VP of Revenue Operations",
+                key="contact_role_field",
+                value=st.session_state.get("_contact_role", ""),
+            )
+
+        # ── Option B: LinkedIn text paste ─────────────────────────────────────
+        with st.expander("📋 Paste LinkedIn Profile (optional enrichment)"):
+            st.markdown(
+                "Go to their LinkedIn profile → select all text on the page "
+                "(**Ctrl+A**) → paste it here. Claude will extract their name, "
+                "title, and any relevant details to personalize the emails."
+            )
+            linkedin_text = st.text_area(
+                "LinkedIn profile text",
+                height=200,
+                placeholder="Paste LinkedIn profile text here...",
+                key="linkedin_paste_field",
+                label_visibility="collapsed",
+            )
+
+        # Show auto-fill success if LinkedIn was previously parsed
+        if st.session_state.get("_linkedin_parsed"):
+            st.markdown(
+                '<div class="linkedin-success">'
+                '✓ Contact details auto-filled from LinkedIn profile. '
+                'Hook extracted for email personalization.'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+        # ── Tone selector ─────────────────────────────────────────────────────
+        st.markdown("### ✍️ Email Tone")
+        tone_col, _ = st.columns([2, 1])
+        with tone_col:
+            email_tone = st.radio(
+                "Choose the voice and style for your email sequence:",
+                options=list(TONES.keys()),
+                index=0,
+                horizontal=True,
+                key="email_tone",
+                help=(
+                    "Professional — polished and formal  |  "
+                    "Casual & Friendly — warm and conversational  |  "
+                    "Direct & No-Nonsense — terse, value-first"
+                ),
+            )
+        st.caption(f"*{email_tone}:* {TONES[email_tone]}")
+
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
+
+        # ── Generate button ───────────────────────────────────────────────────
+        contact_name = contact_name_input.strip()
+        contact_role = contact_role_input.strip()
+        can_generate = bool(contact_name and contact_role)
+
+        gen_col, _ = st.columns([1, 3])
+        with gen_col:
+            generate_btn = st.button(
+                "✉️ Generate Email Sequence",
+                type="primary",
+                disabled=not can_generate,
+                use_container_width=True,
+                key="generate_emails_btn",
+            )
+
+        if not can_generate:
+            missing_contact = []
+            if not contact_name: missing_contact.append("Contact Name")
+            if not contact_role: missing_contact.append("Contact Title / Role")
+            if missing_contact:
+                st.info(
+                    f"Required to generate emails: {' · '.join(missing_contact)}",
+                    icon="ℹ️",
+                )
+
+        # Post-generation indicator
+        if st.session_state.get("stage2_complete"):
+            st.success(
+                "✅ Email sequence generated — switch to **📧 Emails + Export** to review.",
+                icon="📧",
+            )
+
+
+# ── Tab 4: Emails + Export ────────────────────────────────────────────────────
+with tab4:
+    if not st.session_state.get("stage2_complete"):
+        st.info(
+            "Generate your email sequence first (**👤 Contact** tab).",
+            icon="🔒",
+        )
+    else:
+        emails        = st.session_state["emails"]
+        _tone         = st.session_state.get("_tone",         "Professional")
+        _contact_name = st.session_state.get("_contact_name", "")
+        _contact_role = st.session_state.get("_contact_role", "")
+        _company_url  = st.session_state.get("_company_url",  "")
+
+        # ── Email review ──────────────────────────────────────────────────────
         approved_count = sum(
             1 for i in range(len(emails))
             if st.session_state.get(f"approve_{i}", True)
@@ -900,8 +999,6 @@ with tab3:
             st.text_input("Subject", value=email.get("subject", ""), key=f"subject_{i}")
             st.text_area("Body", value=email.get("body", ""), key=f"body_{i}", height=190)
 
-            # Copy-ready expander — shows a single formatted code block the
-            # user can copy verbatim into their email client or outreach tool.
             with st.expander("📋 Copy-ready text"):
                 subj = st.session_state.get(f"subject_{i}", email.get("subject", ""))
                 body = st.session_state.get(f"body_{i}",    email.get("body", ""))
@@ -910,25 +1007,9 @@ with tab3:
             st.markdown("</div>", unsafe_allow_html=True)
             st.markdown("")  # spacer
 
-
-# ── Tab 4: Export ─────────────────────────────────────────────────────────────
-with tab4:
-    if not st.session_state.get("emails"):
-        st.info(
-            "Fill in the **⚙️ Setup** tab and click **⚡ Analyze & Generate** "
-            "to unlock CSV export and HubSpot sync.",
-            icon="📤",
-        )
-    else:
-        emails        = st.session_state["emails"]
-        _tone         = st.session_state.get("_tone",         "Professional")
-        _contact_name = st.session_state.get("_contact_name", "")
-        _contact_role = st.session_state.get("_contact_role", "")
-        _company_url  = st.session_state.get("_company_url",  "")
+        st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
         # ── CSV download ──────────────────────────────────────────────────────
-        # build_csv() reads current widget states (from tab3) so edits and
-        # approval decisions are reflected in the exported file.
         st.markdown("## 📥 Export Sequence")
 
         csv_data     = build_csv(emails, _tone, _contact_name, _company_url)
@@ -955,7 +1036,6 @@ with tab4:
         st.markdown("<hr class='section-divider'>", unsafe_allow_html=True)
 
         # ── HubSpot sync ──────────────────────────────────────────────────────
-        # Assembles only approved + edited emails from tab3 widget states.
         st.markdown("## 🔶 HubSpot Integration *(optional)*")
 
         approved_emails = [
@@ -1004,7 +1084,7 @@ with tab4:
         if hs_token:
             if n_approved == 0:
                 st.warning(
-                    "No emails are approved — tick at least one checkbox in the **📧 Emails** tab.",
+                    "No emails are approved — tick at least one checkbox in the email list above.",
                     icon="⚠️",
                 )
             else:
@@ -1027,7 +1107,6 @@ with tab4:
         else:
             st.info("Enter your HubSpot API key above to enable CRM sync.", icon="ℹ️")
 
-        # Sync log persisted in session_state — survives re-renders
         if st.session_state.get("hs_sync_log"):
             st.markdown("**Sync results:**")
             for icon, msg in st.session_state["hs_sync_log"]:
@@ -1035,33 +1114,45 @@ with tab4:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# BLOCK 1 — Run Claude calls when button is clicked
-# Stores all results in session_state; renders nothing itself.
-# The display block (Block 2) handles all rendering on every re-run.
+# TAB SWITCH INJECTION
+# If the proceed button was clicked, inject JS to click the Contact tab.
+# Runs after all tab content has been rendered.
 # ═════════════════════════════════════════════════════════════════════════════
 
-if run_btn and can_run:
+if st.session_state.get("_goto_contact"):
+    st.session_state.pop("_goto_contact")
+    components.html("""
+<script>
+setTimeout(function() {
+    var tabs = window.parent.document.querySelectorAll('button[data-baseweb="tab"]');
+    if (tabs.length > 2) { tabs[2].click(); }
+}, 200);
+</script>
+""", height=0)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE 1 HANDLER — Qualify This Account
+# Runs ICP analysis + seniority advisor, stores results, sets stage1_complete.
+# ═════════════════════════════════════════════════════════════════════════════
+
+if qualify_btn and can_qualify:
     client = anthropic.Anthropic(api_key=anthropic_key)
 
-    # Clear stale results from any previous run
-    for k in ("analysis", "seniority", "emails", "hs_sync_log"):
+    # Clear stale qualification results; preserve email state if re-qualifying
+    for k in ("analysis", "seniority", "stage1_complete", "stage2_complete",
+              "emails", "hs_sync_log", "_linkedin_parsed", "_hook"):
         st.session_state.pop(k, None)
-    # Also reset per-email edit/approve widget states so the new sequence
-    # renders with fresh defaults (not values carried over from the last run).
     for k in list(st.session_state.keys()):
         if k.startswith(("approve_", "subject_", "body_")):
             st.session_state.pop(k, None)
 
-    # Snapshot the inputs so the display block uses consistent values
-    # even if the user edits the form fields after analysis completes.
-    st.session_state["_product"]      = product_desc
-    st.session_state["_icp_string"]   = icp_string
-    st.session_state["_company_url"]  = company_url
-    st.session_state["_contact_name"] = contact_name
-    st.session_state["_contact_role"] = contact_role
-    st.session_state["_tone"]         = email_tone   # persist chosen tone
+    # Snapshot the inputs used for this qualification
+    st.session_state["_product"]     = product_desc
+    st.session_state["_icp_string"]  = icp_string
+    st.session_state["_company_url"] = company_url
 
-    # ── Step 1: ICP analysis ──────────────────────────────────────────────────
+    # Step 1: ICP analysis
     with st.spinner("Analyzing company-ICP fit…"):
         try:
             analysis = run_icp_analysis(client, product_desc, icp_string, company_url)
@@ -1070,31 +1161,79 @@ if run_btn and can_run:
             st.error(f"ICP analysis failed: {e}")
             st.stop()
 
-    # ── Step 2: Seniority advisor ─────────────────────────────────────────────
+    # Step 2: Seniority advisor (non-fatal)
     with st.spinner("Identifying optimal contact seniority…"):
         try:
             seniority = run_seniority_advisor(client, st.session_state["analysis"], product_desc)
             st.session_state["seniority"] = seniority
         except Exception as e:
-            # Non-fatal — show a warning but continue to email generation
             st.warning(f"Seniority advisor skipped: {e}")
             st.session_state["seniority"] = {}
 
-    # ── Step 3: Email sequence ────────────────────────────────────────────────
-    angle = st.session_state["analysis"].get("recommended_angle", "")
+    st.session_state["stage1_complete"] = True
+    st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# STAGE 2 HANDLER — Generate Email Sequence
+# Optionally parses LinkedIn text, then runs email generation.
+# ═════════════════════════════════════════════════════════════════════════════
+
+if generate_btn and can_generate:
+    client = anthropic.Anthropic(api_key=anthropic_key)
+
+    # Snapshot contact inputs
+    st.session_state["_contact_name"] = contact_name
+    st.session_state["_contact_role"] = contact_role
+    st.session_state["_tone"]         = email_tone
+
+    # Clear stale email state
+    st.session_state.pop("emails", None)
+    st.session_state.pop("hs_sync_log", None)
+    st.session_state.pop("_hook", None)
+    st.session_state.pop("_linkedin_parsed", None)
+    for k in list(st.session_state.keys()):
+        if k.startswith(("approve_", "subject_", "body_")):
+            st.session_state.pop(k, None)
+
+    # Step 1: LinkedIn parse (optional, if text was pasted)
+    _raw_linkedin = st.session_state.get("linkedin_paste_field", "").strip()
+    hook = None
+    if _raw_linkedin:
+        with st.spinner("Parsing LinkedIn profile…"):
+            try:
+                parsed = run_linkedin_parse(client, _raw_linkedin)
+                # Auto-fill name/role if not already manually entered
+                if parsed.get("name") and not contact_name:
+                    st.session_state["_contact_name"] = parsed["name"]
+                    contact_name = parsed["name"]
+                if parsed.get("title") and not contact_role:
+                    st.session_state["_contact_role"] = parsed["title"]
+                    contact_role = parsed["title"]
+                hook = parsed.get("hook") or None
+                st.session_state["_hook"]           = hook
+                st.session_state["_linkedin_parsed"] = True
+            except Exception as e:
+                st.warning(f"LinkedIn parse skipped: {e}")
+
+    # Step 2: Email sequence generation
+    _product    = st.session_state.get("_product",    product_desc)
+    _icp_string = st.session_state.get("_icp_string", icp_string)
+    _company    = st.session_state.get("_company_url", company_url)
+    _angle      = st.session_state.get("analysis", {}).get("recommended_angle", "")
+
     with st.spinner("Generating personalised 4-email sequence…"):
         try:
             emails = run_sequence_generation(
-                client, product_desc, icp_string, company_url,
-                contact_name, contact_role, angle,
-                tone=email_tone,          # pass chosen tone to Claude
+                client, _product, _icp_string, _company,
+                contact_name, contact_role, _angle,
+                tone=email_tone,
+                hook=hook,
             )
             st.session_state["emails"] = emails
         except Exception as e:
             st.error(f"Email generation failed: {e}")
             st.stop()
 
-elif run_btn and not can_run:
-    st.error("Please complete the required fields before running the analysis.")
-
-
+    st.session_state["stage2_complete"] = True
+    st.rerun()
