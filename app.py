@@ -576,6 +576,23 @@ label {
 ::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #818cf8; }
 
+/* ── Security badge ─────────────────────────────────────────────────────── */
+.security-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.2);
+    color: rgba(255,255,255,0.75);
+    font-size: .6rem;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 3px 10px;
+    border-radius: 20px;
+    margin-left: 8px;
+    vertical-align: middle;
+    backdrop-filter: blur(4px);
+}
+
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
 @keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(12px); }
@@ -1145,6 +1162,39 @@ with st.sidebar:
 4. **Generate emails** — personalized 4-email sequence with tone control
 5. **Export or sync** — CSV download or HubSpot CRM sync
 """)
+
+    st.markdown("### 🔒 Privacy & Security")
+    st.markdown("""
+<div style="background:#f8f9fc;border:1px solid #e4e8f2;border-radius:10px;
+            padding:14px 16px;margin-bottom:4px;">
+    <div style="font-size:.78rem;color:#4b5563;line-height:1.7;">
+        <div style="margin-bottom:8px;">
+            <strong style="color:#1a1f36;">API keys are session-only.</strong><br>
+            Apollo and HubSpot tokens are held in browser memory for the
+            duration of your session and discarded when you close the tab.
+            They are never written to disk or stored on any server.
+        </div>
+        <div style="margin-bottom:8px;">
+            <strong style="color:#1a1f36;">No data is collected.</strong><br>
+            This app does not log your inputs, company URLs, contact details,
+            or generated emails anywhere.
+        </div>
+        <div>
+            <strong style="color:#1a1f36;">Open source.</strong><br>
+            The full source code is publicly available — you can verify
+            every API call and confirm nothing is recorded.
+        </div>
+    </div>
+    <div style="margin-top:12px;padding-top:10px;border-top:1px solid #e4e8f2;">
+        <a href="https://github.com/ashitagoel12/gtm-outreach-tool"
+           target="_blank"
+           style="font-size:.78rem;font-weight:700;color:#6366f1;text-decoration:none;">
+            📂 View source on GitHub →
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
     st.divider()
 
     # ── Stage progress ────────────────────────────────────────────────────────
@@ -1210,7 +1260,7 @@ with st.sidebar:
 
 st.markdown("""
 <div class="hero">
-    <h1>🎯 GTM Outreach Intelligence <span class="v2-badge">V3</span></h1>
+    <h1>🎯 GTM Outreach Intelligence <span class="v2-badge">V3</span> <span class="security-badge">🔒 No data stored</span></h1>
     <p>3-stage workflow: qualify the account → identify your contact → generate a personalised email sequence</p>
 </div>
 """, unsafe_allow_html=True)
@@ -1549,6 +1599,25 @@ with tab3:
                 ),
                 key="apollo_key_input",
             )
+        st.markdown("""
+<div style="display:flex;align-items:flex-start;gap:10px;
+            background:#f8f9fc;border:1px solid #e4e8f2;
+            border-left:3px solid #6366f1;border-radius:8px;
+            padding:10px 14px;margin-top:6px;margin-bottom:4px;">
+    <span style="font-size:1rem;line-height:1.4;">🔒</span>
+    <div style="font-size:.78rem;color:#4b5563;line-height:1.5;">
+        <strong style="color:#1a1f36;">Your key stays private.</strong>
+        It's used only to make a single search request during this session —
+        never stored, never logged, never leaves your browser except to go
+        directly to Apollo's API.
+        <a href="https://github.com/ashitagoel12/gtm-outreach-tool/blob/main/app.py"
+           target="_blank"
+           style="color:#6366f1;font-weight:600;text-decoration:none;">
+            Verify in the source code →
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)
         st.caption(
             "No Apollo account? "
             "[Get a free API key →](https://app.apollo.io/signup) "
@@ -1878,6 +1947,25 @@ with tab4:
             help="Never stored server-side.",
             key="hs_token",
         )
+
+        st.markdown("""
+<div style="display:flex;align-items:flex-start;gap:10px;
+            background:#fff8f6;border:1px solid #ffe4d6;
+            border-left:3px solid #ff7a59;border-radius:8px;
+            padding:10px 14px;margin-top:6px;margin-bottom:4px;">
+    <span style="font-size:1rem;line-height:1.4;">🔒</span>
+    <div style="font-size:.78rem;color:#4b5563;line-height:1.5;">
+        <strong style="color:#1a1f36;">Your token stays private.</strong>
+        It's used only to push the contact and emails you approve to HubSpot —
+        never stored server-side or persisted between sessions.
+        <a href="https://github.com/ashitagoel12/gtm-outreach-tool/blob/main/app.py"
+           target="_blank"
+           style="color:#ff7a59;font-weight:600;text-decoration:none;">
+            Verify in the source code →
+        </a>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
         if hs_token:
             if n_approved == 0:
