@@ -250,6 +250,162 @@ st.markdown("""
     padding-top: 24px;
     border-top: none;
   }
+
+  /* ── Keyframes ──────────────────────────────────────────────────────────── */
+
+  @keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0);    }
+  }
+
+  @keyframes scaleBouncIn {
+    0%   { transform: scale(0.55); opacity: 0; }
+    65%  { transform: scale(1.12);              }
+    85%  { transform: scale(0.96);              }
+    100% { transform: scale(1);    opacity: 1; }
+  }
+
+  @keyframes heroFlow {
+    0%   { background-position: 0%   50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0%   50%; }
+  }
+
+  @keyframes badgeSweep {
+    0%   { background-position: -250% center; }
+    100% { background-position:  250% center; }
+  }
+
+  @keyframes pulseRing {
+    0%   { box-shadow: 0 0 0 0   rgba(34,197,94,.55); }
+    60%  { box-shadow: 0 0 0 10px rgba(34,197,94,.0);  }
+    100% { box-shadow: 0 0 0 0   rgba(34,197,94,.0);   }
+  }
+
+  @keyframes chipPop {
+    0%   { transform: scale(1);    }
+    40%  { transform: scale(1.14); }
+    100% { transform: scale(1.06); }
+  }
+
+  /* ── Hero — slow animated gradient ─────────────────────────────────────── */
+  .hero {
+    background: linear-gradient(135deg, #1a1f36, #2d3561, #1e2a58, #3b3f7a, #1a1f36);
+    background-size: 400% 400%;
+    animation: heroFlow 18s ease infinite;
+  }
+
+  /* ── V3 badge — sweeping shimmer ────────────────────────────────────────── */
+  .v2-badge {
+    background: linear-gradient(100deg,
+      #6366f1 0%, #8b5cf6 30%, #c4b5fd 50%, #8b5cf6 70%, #6366f1 100%);
+    background-size: 300% auto;
+    animation: badgeSweep 3.5s linear infinite;
+  }
+
+  /* ── ICP section header — gradient text ─────────────────────────────────── */
+  .icp-header {
+    background: linear-gradient(90deg, #4338ca 0%, #6366f1 60%, #818cf8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    border-bottom-color: transparent;
+    border-image: linear-gradient(90deg, #6366f1 0%, #c7d2fe 100%) 1;
+  }
+
+  /* ── Cards — hover lift ─────────────────────────────────────────────────── */
+  .card {
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(99,102,241,.09), 0 2px 6px rgba(0,0,0,.05);
+  }
+
+  /* ── Score badge — bouncy entrance ─────────────────────────────────────── */
+  .score-badge {
+    animation: scaleBouncIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+
+  /* High score: entrance + 2× pulse ring */
+  .score-high {
+    animation:
+      scaleBouncIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both,
+      pulseRing    1.8s ease-out 0.55s 2;
+  }
+
+  /* ── Seniority card — hover lift ────────────────────────────────────────── */
+  .seniority-card {
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .seniority-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(139,92,246,.12);
+  }
+
+  /* ── Seniority level badges — micro hover glow ──────────────────────────── */
+  .seniority-level {
+    transition: transform 0.14s ease, box-shadow 0.14s ease;
+    cursor: default;
+  }
+  .seniority-level:hover {
+    transform: scale(1.05);
+    box-shadow: 0 0 14px rgba(99,102,241,.28);
+  }
+
+  /* ── Chips — micro pop on hover ─────────────────────────────────────────── */
+  .chip {
+    transition: transform 0.13s ease, background 0.13s ease, color 0.13s ease;
+    cursor: default;
+  }
+  .chip:hover {
+    animation: chipPop 0.22s ease forwards;
+    background: #e0e7ff;
+    color: #3730a3;
+  }
+
+  /* ── Buttons — lift + indigo glow ───────────────────────────────────────── */
+  [data-testid="stButton"] > button {
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+  }
+  [data-testid="stButton"] > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 5px 16px rgba(99,102,241,.22) !important;
+  }
+  [data-testid="stButton"] > button:active {
+    transform: translateY(0) scale(0.98) !important;
+    box-shadow: 0 1px 4px rgba(99,102,241,.15) !important;
+  }
+
+  /* ── Input & textarea — indigo focus ring ───────────────────────────────── */
+  [data-baseweb="input"] input,
+  [data-baseweb="textarea"] textarea {
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  [data-baseweb="input"] input:focus,
+  [data-baseweb="textarea"] textarea:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 3px rgba(99,102,241,.18) !important;
+  }
+
+  /* ── Tab panels — fade + slide up on switch ─────────────────────────────── */
+  [data-testid="stTabs"] [role="tabpanel"] {
+    animation: fadeSlideIn 0.22s ease both;
+  }
+
+  /* ── HubSpot banner — hover depth ───────────────────────────────────────── */
+  .hs-banner {
+    transition: box-shadow 0.18s ease, transform 0.18s ease;
+  }
+  .hs-banner:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 28px rgba(255,92,53,.22);
+  }
+
+  /* ── LinkedIn / Apollo success notice — slide in ────────────────────────── */
+  .linkedin-success {
+    animation: fadeSlideIn 0.3s ease both;
+  }
 </style>
 """, unsafe_allow_html=True)
 
